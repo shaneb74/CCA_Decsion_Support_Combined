@@ -96,12 +96,10 @@ elif st.session_state.step == 'care_partner_context':
 Many families find that when **{primary}** needs assisted living or memory care, their spouse or partner also needs some support at home.
 If that could be your situation, you can add a simple in-home care plan for the spouse/partner now. It helps you see the **whole household** picture without redoing anything later.
 """)
-    add_partner = False
-    partner_name = ''
     if single:
         add_partner = st.checkbox("Also create a support plan for the spouse/partner", value=False, key='care_partner_add')
         if add_partner:
-            partner_name = st.text_input("Spouse/partner name", value="Spouse/Partner", key='care_partner_name')
+            st.text_input("Spouse/partner name", value="Spouse/Partner", key='care_partner_name')
 
     cols = st.columns(2)
     with cols[0]:
@@ -111,7 +109,6 @@ If that could be your situation, you can add a simple in-home care plan for the 
     with cols[1]:
         if st.button('Add spouse/partner and continue'):
             if single and st.session_state.get('care_partner_add'):
-                # Append a simple second person
                 new_id = 'B'
                 name = st.session_state.get('care_partner_name') or 'Spouse/Partner'
                 st.session_state.people.append({'id': new_id, 'display_name': name, 'relationship': 'spouse'})
@@ -151,7 +148,6 @@ elif st.session_state.step == 'planner':
     if mobility_q_index is not None:
         st.session_state.mobility_raw[person['id']] = answers.get(f"q{mobility_q_index}")
 
-    # Conditional
     def infer_flags(ans: dict) -> set:
         f = set()
         for idx, q in enumerate(qa.get('questions', []), start=1):
@@ -179,7 +175,6 @@ elif st.session_state.step == 'planner':
     with c1:
         if st.button('Back'):
             if i == 0:
-                # go back to interstitial instead of audience
                 st.session_state.step = 'care_partner_context'
             else:
                 st.session_state.current_person = i-1
@@ -191,7 +186,7 @@ elif st.session_state.step == 'planner':
                 'care_type': result.care_type,
                 'flags': result.flags,
                 'scores': result.scores,
-                'reasons': result.reasons',
+                'reasons': result.reasons,
                 'advisory': result.advisory
             }
             if i+1 < len(people):
@@ -215,7 +210,6 @@ elif st.session_state.step == 'recommendations':
         if rec.get('advisory'):
             st.info(rec['advisory'])
 
-        # Scenario override selector
         care_choices = ['in_home','assisted_living','memory_care']
         pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
         choice = st.selectbox(f"Care scenario for {p['display_name']}",
@@ -223,7 +217,6 @@ elif st.session_state.step == 'recommendations':
                               index=care_choices.index(default),
                               key=f"override_{p['id']}",
                               help='Start with the recommendation, or choose a different scenario to compare.')
-        # Save override as raw key
         rev = {v:k for k,v in pretty.items()}
         st.session_state.care_overrides[p['id']] = rev[choice]
 
@@ -243,12 +236,10 @@ elif st.session_state.step == 'calculator':
     for p in st.session_state.people:
         rec = st.session_state.planner_results[p['id']]
         pid = p['id']
-        # Use override if set
         care_type = st.session_state.get('care_overrides', {}).get(pid, rec['care_type'])
 
         st.subheader(f"{p['display_name']} — Scenario: {care_type.replace('_',' ').title()} (recommendation: {rec['care_type'].replace('_',' ').title()})")
 
-        # Allow switching scenario here too
         care_choices = ['in_home','assisted_living','memory_care']
         pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
         scenario_label = st.selectbox(f"Care scenario for {p['display_name']} (adjust here if needed)",
@@ -263,13 +254,11 @@ elif st.session_state.step == 'calculator':
                 if k in st.session_state: del st.session_state[k]
             care_type = care_type_new
 
-        # Map planner mobility to default
         raw_mob = st.session_state.get('mobility_raw', {}).get(pid)
         mobility_prefill = 'Independent'
         if raw_mob in (2, 3): mobility_prefill = 'Assisted'
         if raw_mob == 4: mobility_prefill = 'Non-ambulatory'
 
-        # Care Level dropdown
         default_care_level = 'High' if ('severe_cognitive_decline' in rec['flags'] or care_type=='memory_care') else 'Medium'
         care_level = st.selectbox('Care Level (staffing intensity)',
                                   ['Low','Medium','High'],
@@ -277,7 +266,6 @@ elif st.session_state.step == 'calculator':
                                   key=f"{pid}_care_level",
                                   help='Higher care levels reflect more hands-on support and supervision.')
 
-        # Mobility dropdown with parenthetical
         mobility_options = ['Independent (no device)',
                             'Assisted (cane/walker or needs help)',
                             'Non-ambulatory (wheelchair/bedbound)']
@@ -295,7 +283,6 @@ elif st.session_state.step == 'calculator':
                                       help='Mobility affects staffing and environmental needs.')
         mobility = mobility_map_out[mobility_label]
 
-        # Chronic conditions with context
         chronic_options = ['None (no ongoing conditions)',
                            'Some (1–2 manageable conditions)',
                            'Multiple/Complex (several or complex needs)']
@@ -313,7 +300,6 @@ elif st.session_state.step == 'calculator':
 
         inp = CalcInputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
 
-        # Room vs hours/days for in-home
         if care_type in ['assisted_living','memory_care']:
             for k in [f"{pid}_hours", f"{pid}_days"]:
                 if k in st.session_state: del st.session_state[k]
@@ -329,12 +315,10 @@ elif st.session_state.step == 'calculator':
             days = st.slider('Days of care per month', 0, 31, 20, 1,
                              key=f"{pid}_days",
                              help='How many days per month caregivers are scheduled.')
-            # Pass both when supported; engines that only use hours/day will ignore days
             try:
                 inp.in_home_hours_per_day = int(hours)
                 setattr(inp, 'in_home_days_per_month', int(days))
             except Exception:
-                # Fallback if CalcInputs is a tuple/namedtuple
                 pass
 
         monthly = calculator.monthly_cost(inp)
@@ -353,7 +337,7 @@ elif st.session_state.step == 'calculator':
         st.session_state.step = 'household'
         st.rerun()
 
-# ---------- Household & Assets (full, with VA wizard) ----------
+# ---------- Household & Assets ----------
 elif st.session_state.step == 'household':
     people = st.session_state.get('people', [])
     names = [p['display_name'] for p in people]
