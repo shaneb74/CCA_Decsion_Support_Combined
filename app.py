@@ -191,7 +191,7 @@ elif st.session_state.step == 'planner':
                 'care_type': result.care_type,
                 'flags': result.flags,
                 'scores': result.scores,
-                'reasons': result.reasons,
+                'reasons': result.reasons',
                 'advisory': result.advisory
             }
             if i+1 < len(people):
@@ -233,7 +233,7 @@ elif st.session_state.step == 'recommendations':
         st.session_state.step = 'calculator'
         st.rerun()
 
-# ---------- Calculator (same as prior build) ----------
+# ---------- Calculator ----------
 elif st.session_state.step == 'calculator':
     st.header('Cost Planner')
     state = st.selectbox('Location', ['National','Washington','California','Texas','Florida'],
@@ -259,7 +259,7 @@ elif st.session_state.step == 'calculator':
         care_type_new = {v:k for k,v in pretty.items()}[scenario_label]
         if care_type_new != care_type:
             st.session_state.care_overrides[pid] = care_type_new
-            for k in [f"{pid}_room", f"{pid}_hours"]:
+            for k in [f"{pid}_room", f"{pid}_hours", f"{pid}_days"]:
                 if k in st.session_state: del st.session_state[k]
             care_type = care_type_new
 
@@ -313,19 +313,29 @@ elif st.session_state.step == 'calculator':
 
         inp = CalcInputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
 
-        # Room vs hours, with help text and state clearing
+        # Room vs hours/days for in-home
         if care_type in ['assisted_living','memory_care']:
-            if f"{pid}_hours" in st.session_state: del st.session_state[f"{pid}_hours"]
+            for k in [f"{pid}_hours", f"{pid}_days"]:
+                if k in st.session_state: del st.session_state[k]
             room = st.selectbox('Room Type', ['Studio','1 Bedroom','Shared'],
                                 key=f"{pid}_room",
                                 help='Typical base rates vary by room size and privacy.')
             inp.room_type = room
         else:
             if f"{pid}_room" in st.session_state: del st.session_state[f"{pid}_room"]
-            hours = st.slider('In-home care hours per day', 0, 24, 6, 1,
+            hours = st.slider('In-home care hours per day', 0, 24, 4, 1,
                               key=f"{pid}_hours",
                               help='Total paid caregiver hours per day.')
-            inp.in_home_hours_per_day = int(hours)
+            days = st.slider('Days of care per month', 0, 31, 20, 1,
+                             key=f"{pid}_days",
+                             help='How many days per month caregivers are scheduled.')
+            # Pass both when supported; engines that only use hours/day will ignore days
+            try:
+                inp.in_home_hours_per_day = int(hours)
+                setattr(inp, 'in_home_days_per_month', int(days))
+            except Exception:
+                # Fallback if CalcInputs is a tuple/namedtuple
+                pass
 
         monthly = calculator.monthly_cost(inp)
         st.metric('Estimated Monthly Cost', f"${monthly:,.0f}")
@@ -343,6 +353,253 @@ elif st.session_state.step == 'calculator':
         st.session_state.step = 'household'
         st.rerun()
 
-# ---------- Household & Assets (VA wizard retained from prior build) ----------
+# ---------- Household & Assets (full, with VA wizard) ----------
 elif st.session_state.step == 'household':
-    st.write("Household & VA wizard unchanged here; use previous VA build file if needed.")
+    people = st.session_state.get('people', [])
+    names = [p['display_name'] for p in people]
+    nameA = names[0] if names else 'Person A'
+    nameB = names[1] if len(names) > 1 else 'Person B'
+
+    st.header('Household & Budget (optional)')
+    st.markdown("These fields help you see affordability. If you don't have the details handy, you can skip this part.")
+
+    values = st.session_state.get('household_values', {})
+
+    def currency_input(label, key, default=0):
+        return st.number_input(label, min_value=0, step=50, value=int(values.get(key, default)), key=key)
+
+    # Individual Monthly Income
+    with st.expander('Monthly Income — Individual', expanded=True):
+        if len(people) > 1:
+            colA, colB = st.columns(2)
+            with colA:
+                a_ss = currency_input(f'Social Security — {nameA}', 'a_social_security', 0)
+                a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
+                a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
+            with colB:
+                b_ss = currency_input(f'Social Security — {nameB}', 'b_social_security', 0)
+                b_pn = currency_input(f'Pension — {nameB}', 'b_pension', 0)
+                b_other = currency_input(f'Other income — {nameB}', 'b_other_income', 0)
+        else:
+            a_ss = currency_input(f'Social Security — {nameA}', 'a_social_security', 0)
+            a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
+            a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
+            b_ss = b_pn = b_other = 0
+
+    # Household Monthly Income (shared)
+    with st.expander('Monthly Income — Household (shared)', expanded=False):
+        st.caption('Household-level income typically tied to shared assets.')
+        hh_rent = currency_input('Rental property income', 'hh_rental_income', 0)
+        hh_annuity = currency_input('Annuity income (household-owned)', 'hh_annuity_income', 0)
+        hh_invest = currency_input('Dividends/interest (joint investments)', 'hh_investment_income', 0)
+        hh_trust = currency_input('Trust distributions (household)', 'hh_trust_income', 0)
+        hh_other = currency_input('Other household income', 'hh_other_income', 0)
+        household_other = hh_rent + hh_annuity + hh_invest + hh_trust + hh_other
+
+    # Benefits: VA Wizard + LTC
+    with st.expander('Benefits (VA, Long-Term Care insurance)', expanded=True):
+        st.markdown('**VA benefits**')
+        settings = calculator.settings
+        va_mapr = settings.get('va_mapr_2025', {
+            'Veteran (no dependents) — A&A': 2358,
+            'Veteran + 1 dependent — A&A': 2795,
+            'Two veterans married, one A&A': 2795,
+            'Surviving spouse — A&A': 1515,
+            'Surviving spouse + 1 child — A&A': 1808
+        })
+
+        def va_known_block(tag_prefix, person_name):
+            st.write(f'**{person_name}**')
+            va_path = st.radio(
+                f'Choose an option for {person_name}:',
+                ['I already receive or qualify for VA pension/Aid & Attendance',
+                 'I served, but I’m not sure if I qualify'],
+                key=f'{tag_prefix}_va_path'
+            )
+            va_monthly = 0
+            va_detail = ''
+            if va_path.startswith('I already receive'):
+                tier = st.selectbox(
+                    'Select status',
+                    list(va_mapr.keys()),
+                    key=f'{tag_prefix}_va_tier',
+                    help='Monthly caps converted from VA MAPR. Actual payment equals MAPR minus your income for VA purposes.'
+                )
+                max_monthly = int(va_mapr[tier])
+                st.caption(f'Estimated monthly cap for this tier: ${max_monthly:,}.')
+                va_monthly = st.number_input('Monthly VA payment (enter actual if known; otherwise use cap)',
+                                             min_value=0, step=25, value=max_monthly, key=f'{tag_prefix}_va_actual')
+                va_detail = tier
+            else:
+                st.info('Quick check (not exhaustive):')
+                wartime = st.checkbox('Served during a wartime period', key=f'{tag_prefix}_wartime')
+                age_or_dis = st.checkbox('65+ or permanently and totally disabled', key=f'{tag_prefix}_age_dis')
+                discharge = st.checkbox('Discharge not dishonorable', key=f'{tag_prefix}_discharge')
+                need_aa = st.checkbox('Needs help with daily activities or housebound', key=f'{tag_prefix}_need_aa')
+                below_networth = st.checkbox('Net worth under VA limit', key=f'{tag_prefix}_networth')
+                likely = wartime and age_or_dis and discharge and below_networth
+                if likely:
+                    st.success('You may qualify for VA pension; Aid & Attendance may apply if daily help/housebound.')
+                else:
+                    st.warning('Based on these answers, VA pension may not apply. You can still check with a VSO.')
+                va_detail = 'Wizard: pending application'
+            return va_monthly, va_detail
+
+        if len(st.session_state.people) > 1:
+            col1, col2 = st.columns(2)
+            with col1:
+                a_va, a_va_detail = va_known_block('a', nameA)
+                a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
+                                     index=0 if values.get('a_ltc','No')=='No' else 1, key='a_ltc')
+            with col2:
+                b_va, b_va_detail = va_known_block('b', nameB)
+                b_ltc = st.selectbox(f'Long-Term Care insurance — {nameB}', ['No','Yes'],
+                                     index=0 if values.get('b_ltc','No')=='No' else 1, key='b_ltc')
+        else:
+            a_va, a_va_detail = va_known_block('a', nameA)
+            a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
+                                 index=0 if values.get('a_ltc','No')=='No' else 1, key='a_ltc')
+            b_va = 0
+            b_va_detail = ''
+            b_ltc = 'No'
+
+    # Home decision
+    with st.expander('Home decision', expanded=False):
+        decision = st.selectbox('What will you do with the home?', ['Keep','Sell','HELOC','Reverse mortgage'],
+                                index=['Keep','Sell','HELOC','Reverse mortgage'].index(values.get('home_decision','Keep')),
+                                key='home_decision',
+                                help='Pick one option; related fields will appear below.')
+
+        home_monthly = 0
+        reverse_draw = 0
+        auto_net_proceeds = 0
+
+        if decision == 'Keep':
+            st.info('If you keep the home, include carrying costs.')
+            mortgage = currency_input('Mortgage', 'mortgage', 0)
+            taxes = currency_input('Property taxes', 'property_taxes', 0)
+            ins = currency_input('Home insurance', 'home_insurance', 0)
+            hoa = currency_input('HOA', 'hoa', 0)
+            utils = currency_input('Utilities', 'utilities', 0)
+            maint = currency_input('Maintenance', 'maintenance', 0)
+            heloc = currency_input('HELOC payment (if applicable)', 'heloc_payment_monthly', 0)
+            home_monthly = mortgage + taxes + ins + hoa + utils + maint + heloc
+
+        elif decision == 'Sell':
+            st.info('We’ll estimate net proceeds to add to assets.')
+            value = currency_input('Estimated sale price', 'home_value_estimate', 0)
+            payoff = currency_input('Mortgage payoff (principal remaining)', 'home_payoff', 0)
+            fee_pct_label = st.select_slider('Estimated selling fees (%)', options=list(range(5,11)), value=7, key='selling_fee_pct',
+                                             help='Typical combined agent and closing costs range 6–8% in many markets.')
+            fee_pct = fee_pct_label / 100.0
+            auto_net_proceeds = max(int(value - payoff - value*fee_pct), 0)
+            st.metric('Estimated net proceeds to assets', f"${auto_net_proceeds:,.0f}")
+
+        elif decision == 'HELOC':
+            st.info('Enter the monthly HELOC payment and the remaining available equity.')
+            heloc_payment = currency_input('Monthly HELOC payment', 'heloc_payment_monthly', 0)
+            remaining_equity = currency_input('Remaining available equity (adds to assets)', 'heloc_remaining_equity', 0)
+            home_monthly = heloc_payment
+            auto_net_proceeds = remaining_equity
+
+        else:  # Reverse mortgage
+            st.info('Enter the expected monthly draw and any upfront fees.')
+            reverse_draw = currency_input('Monthly reverse mortgage draw (adds to income)', 'reverse_monthly_draw', 0)
+            reverse_fees = currency_input('Upfront fees (reduce equity)', 'reverse_fees_upfront', 0)
+
+    # Home modifications
+    with st.expander('Home modifications (if receiving in-home care)', expanded=False):
+        any_in_home = any(st.session_state.planner_results[p['id']]['care_type']=='in_home' for p in st.session_state.people)
+        if not any_in_home:
+            st.caption('Modifications are typically most relevant when receiving in-home care.')
+        mods = currency_input('Home modifications (monthlyized estimate)', 'home_modifications_monthly', 0)
+
+    # Other monthly costs
+    with st.expander('Other monthly costs (common)', expanded=False):
+        medicare = currency_input('Medicare premiums', 'medicare_premiums', 0)
+        dvh = currency_input('Dental/Vision/Hearing', 'dental_vision_hearing', 0)
+        debts = currency_input('Other debts', 'other_debts_monthly', 0)
+        phone = currency_input('Phone/Internet', 'optional_phone_internet', 0)
+        personal = currency_input('Personal care', 'optional_personal_care', 0)
+        travel = currency_input('Family travel', 'optional_family_travel', 0)
+        auto = currency_input('Auto', 'optional_auto', 0)
+        auto_ins = currency_input('Auto insurance', 'optional_auto_insurance', 0)
+        pets = currency_input('Pet care', 'pet_care', 0)
+        other_opt = currency_input('Other (optional)', 'optional_other', 0)
+
+    # Assets — Common
+    with st.expander('Assets — Common', expanded=False):
+        st.caption('Liquid or near-liquid assets most families use first.')
+        cash_chk = currency_input('Checking/Savings', 'asset_cash_savings', 0)
+        cds = currency_input('CDs / Money Market', 'asset_cds', 0)
+        brokerage = currency_input('Brokerage (stocks/bonds/ETFs)', 'asset_brokerage', 0)
+        ira = currency_input('Retirement accounts (IRA/401k/403b)', 'asset_retirement', 0)
+        hsa = currency_input('HSA balance', 'asset_hsa', 0)
+        li_cv = currency_input('Life insurance cash value', 'asset_life_ins_cash', 0)
+        common_assets_total = cash_chk + cds + brokerage + ira + hsa + li_cv
+
+    # Assets — Detailed/Other
+    with st.expander('Assets — Detailed/Other', expanded=False):
+        st.caption('Less common or less liquid sources.')
+        other_real_estate = currency_input('Other real estate equity (non-primary)', 'asset_other_real_estate', 0)
+        vehicles = currency_input('Vehicles (net sale value)', 'asset_vehicles', 0)
+        valuables = currency_input('Valuables/collectibles (saleable)', 'asset_valuables', 0)
+        trusts = currency_input('Trust principal available', 'asset_trusts', 0)
+        annuity_sv = currency_input('Annuities (surrender value)', 'asset_annuity_sv', 0)
+        business = currency_input('Business interest (sale value)', 'asset_business', 0)
+        gifts = currency_input('Family support / gifts anticipated', 'asset_family_support', 0)
+        st.write(f"Auto-added from Home decision: ${auto_net_proceeds:,.0f}")
+        detailed_assets_total = other_real_estate + vehicles + valuables + trusts + annuity_sv + business + gifts + auto_net_proceeds
+
+    total_assets = common_assets_total + detailed_assets_total
+
+    # Settings
+    _settings = calculator.settings
+    _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
+    _cap_years = int(_settings.get('display_cap_years_funded', 30))
+
+    # Income math
+    monthly_income_individuals = (a_ss + a_pn + a_other) + (b_ss + b_pn + b_other)
+    monthly_income_benefits = (a_va + (_ltc_add if a_ltc=='Yes' else 0)) + (b_va + (_ltc_add if b_ltc=='Yes' else 0))
+    monthly_income_household = household_other + reverse_draw
+    monthly_income = monthly_income_individuals + monthly_income_benefits + monthly_income_household
+
+    combined_cost = st.session_state.get('combined_monthly_cost', 0)
+    optional_costs = (home_monthly if 'home_monthly' in locals() else 0) + medicare + dvh + mods + debts + phone + personal + travel + auto + auto_ins + pets + other_opt
+    overall_monthly = combined_cost + optional_costs
+
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
+    with c2:
+        st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
+    with c3:
+        gap = max(overall_monthly - monthly_income, 0)
+        st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
+
+    years_funded = float('inf') if gap == 0 else min(_cap_years, round((total_assets / max(gap,1)) / 12, 1))
+    st.metric('Years Funded (assets ÷ gap)', '∞' if gap == 0 else f"{years_funded} years")
+
+    # Detailed per-person breakdown
+    st.subheader('Breakdown by person')
+    for p in st.session_state.people:
+        pid = p['id']
+        pname = p['display_name']
+        care_cost = st.session_state.get('va_cache', {}).get(pid, {}).get('care_cost', 0)
+        if pid == 'A':
+            person_income = a_ss + a_pn + a_other + (a_va + (_ltc_add if a_ltc=='Yes' else 0))/2
+        else:
+            person_income = b_ss + b_pn + b_other + (b_va + (_ltc_add if b_ltc=='Yes' else 0))/2
+        st.write(f"**{pname}**")
+        st.write(f"Care costs (monthly): ${care_cost:,.0f}")
+        st.write(f"Individual income incl. VA/LTC (approx): ${person_income:,.0f}")
+        st.divider()
+
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button('Back to Costs'):
+            st.session_state.step = 'calculator'
+            st.rerun()
+    with cols[1]:
+        st.success('Adjust any values above to explore different scenarios.')
