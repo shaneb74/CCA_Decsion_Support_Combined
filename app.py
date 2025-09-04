@@ -1,14 +1,25 @@
-
+# app.py
 import streamlit as st
 from pathlib import Path
-import matplotlib.pyplot as plt
+
+# Try matplotlib for donuts; fall back to Altair if not installed
+USE_MPL = True
+try:
+    import matplotlib.pyplot as plt  # noqa
+except Exception:
+    USE_MPL = False
+    import altair as alt  # noqa
+
+# Engines from your repo (no stubs)
 from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
 
+# Init engines (engines.py resolves its own JSON paths)
 planner = PlannerEngine()
 calculator = CalculatorEngine()
 
 st.set_page_config(page_title='Senior Navigator • Planner + Cost', page_icon='🧭', layout='centered')
 
+# Ensure data/ exists (your JSONs live there)
 DATA_DIR = Path(__file__).resolve().parent / "data"
 if not DATA_DIR.exists():
     st.error("Missing required `data/` folder with JSON files.")
@@ -17,25 +28,33 @@ if not DATA_DIR.exists():
 # -------------------- helpers --------------------
 def reset_all():
     for k in list(st.session_state.keys()):
-        if k.startswith("A_") or k.startswith("B_") or k in (
+        if k.startswith(("A_", "B_")) or k in (
             'step','people','answers','planner_results','current_person',
             'combined_monthly_cost','household_values','mobility_raw','care_overrides',
             'va_cache','care_partner_add','home_mods','summary_cache'
         ):
             del st.session_state[k]
 
+def donut_altair(labels, values, title):
+    import pandas as pd
+    total = sum(values) or 1
+    df = pd.DataFrame({'label': labels, 'value': values})
+    base = alt.Chart(df).encode(theta='value:Q', color='label:N', tooltip=['label','value'])
+    ring = base.mark_arc(innerRadius=60)
+    text = base.mark_text(radius=90).encode(text='label:N')
+    return (ring + text).properties(title=title, width=360, height=360)
+
 def get_home_mod_catalog():
-    """Pull project list from calculator.settings if present; otherwise use safe defaults."""
     s = calculator.settings or {}
     catalog = s.get('home_modifications_catalog')
     if isinstance(catalog, list) and catalog:
         return catalog
-    # Fallback catalog
+    # Fallback catalog if not in settings
     return [
         {'key':'ramp', 'label':'Exterior ramp (installed)', 'avg':3500},
         {'key':'widen_doors', 'label':'Widen doorways (per doorway)', 'avg':900},
         {'key':'bath_grab', 'label':'Bathroom grab bars (pair installed)', 'avg':300},
-        {'key':'roll_in_shower', 'label':'Convert tub to roll‑in shower', 'avg':8500},
+        {'key':'roll_in_shower', 'label':'Convert tub to roll-in shower', 'avg':8500},
         {'key':'raised_toilet', 'label':'Raised-height toilet', 'avg':600},
         {'key':'stair_lift', 'label':'Stair lift (single flight)', 'avg':4500},
         {'key':'platform_lift', 'label':'Vertical platform lift', 'avg':12000},
@@ -59,19 +78,15 @@ st.sidebar.button('Start over', on_click=reset_all)
 
 # ---------- Intro ----------
 if st.session_state.step == 'intro':
-    st.title("Let's take this one step at a time")
+    st.title("Let’s take this one step at a time")
     st.markdown("""
 Choosing senior living or in-home support can feel overwhelming.  
-This tool is here to make it easier.
+This tool guides you through it.
 
-It's based on years of experience helping families make these decisions.  
-We'll start with a few simple questions about you or your loved one,  
-then we'll recommend a care option and walk through the costs.
-
-**There are no right or wrong answers. Just answer as best you can.**  
-We'll guide you every step of the way.
+We’ll start with a few simple questions, recommend a care option,  
+and then help you plan the costs. There are no right or wrong answers.
 """)
-    st.info('This process usually takes about 10–15 minutes. You can pause at any point.')
+    st.info('Typical time to complete: 10–15 minutes. You can stop anytime.')
     if st.button('Start'):
         st.session_state.step = 'audience'
         st.rerun()
@@ -101,7 +116,7 @@ elif st.session_state.step == 'audience':
         rel_map = {'Myself':'self','My spouse/partner':'spouse','My parent':'parent','Someone else':'other'}
         people = [{'id':'A','display_name':name,'relationship':rel_map.get(choice,'other')}]
 
-    st.caption("When you're ready, we'll move into the care plan questions.")
+    st.caption("Next, we’ll ask a few care questions for each person.")
     if st.button('Continue'):
         st.session_state.people = people
         st.session_state.current_person = 0
@@ -120,8 +135,8 @@ elif st.session_state.step == 'care_partner_context':
 
     st.header('Before we begin the care plan')
     st.markdown(f"""
-Many families find that when **{primary}** needs assisted living or memory care, their spouse or partner also needs some support at home.
-If that could be your situation, you can add a simple in-home care plan for the spouse/partner now. It helps you see the **whole household** picture without redoing anything later.
+When **{primary}** needs assisted living or memory care, the spouse/partner often needs some in-home help too.
+If that might be your situation, you can include a simple support plan for them now so the household picture is complete.
 """)
     if single:
         add_partner = st.checkbox("Also create a support plan for the spouse/partner", value=False, key='care_partner_add')
@@ -136,13 +151,15 @@ If that could be your situation, you can add a simple in-home care plan for the 
     with cols[1]:
         if st.button('Add spouse/partner and continue'):
             if single and st.session_state.get('care_partner_add'):
-                new_id = 'B'
-                name = st.session_state.get('care_partner_name') or 'Spouse/Partner'
-                st.session_state.people.append({'id': new_id, 'display_name': name, 'relationship': 'spouse'})
+                st.session_state.people.append({
+                    'id': 'B',
+                    'display_name': st.session_state.get('care_partner_name') or 'Spouse/Partner',
+                    'relationship': 'spouse'
+                })
             st.session_state.step = 'planner'
             st.rerun()
 
-# ---------- Planner ----------
+# ---------- Planner (Guided Care Plan) ----------
 elif st.session_state.step == 'planner':
     people = st.session_state.get('people', [])
     i = st.session_state.get('current_person', 0)
@@ -151,7 +168,6 @@ elif st.session_state.step == 'planner':
 
     st.header(f"Care Plan Questions for {name}")
     st.caption(f"Person {i+1} of {len(people)}")
-    st.markdown(f"Answer the following for **{name}**.")
 
     answers = st.session_state.answers.get(person['id'], {})
     qa = planner.qa
@@ -160,13 +176,13 @@ elif st.session_state.step == 'planner':
     for idx, q in enumerate(qa.get('questions', []), start=1):
         if 'mobility' in q.get('question','').lower():
             mobility_q_index = idx
-        val = answers.get(f'q{idx}')
+        prev = answers.get(f'q{idx}')
         label = f"{q['question']} (for {name})"
         sel = st.radio(
             label,
             options=[1,2,3,4],
             format_func=lambda n, q=q: q['answers'][str(n)],
-            index=(val-1) if val else 0,
+            index=(prev-1) if prev else 0,
             key=f"{person['id']}_q{idx}",
             help=q.get('help')
         )
@@ -175,11 +191,13 @@ elif st.session_state.step == 'planner':
     if mobility_q_index is not None:
         st.session_state.mobility_raw[person['id']] = answers.get(f"q{mobility_q_index}")
 
+    # infer flags from triggers for conditional q9
     def infer_flags(ans: dict) -> set:
         f = set()
         for idx, q in enumerate(qa.get('questions', []), start=1):
             a = ans.get(f'q{idx}')
-            if a is None: continue
+            if a is None: 
+                continue
             for _, rules in q.get('trigger', {}).items():
                 for rule in rules:
                     if rule.get('answer') == a:
@@ -191,10 +209,12 @@ elif st.session_state.step == 'planner':
     if 'severe_cognitive_decline' in flags and qa.get('conditional_questions'):
         cq = qa['conditional_questions'][0]
         st.warning('It looks like 24/7 supervision may be needed.')
-        conditional_answer = st.radio(cq['question'], options=[1,2],
-                                      format_func=lambda n: cq['answers'][str(n)],
-                                      key=f"{person['id']}_q9",
-                                      help=cq.get('help'))
+        conditional_answer = st.radio(
+            cq['question'], options=[1,2],
+            format_func=lambda n: cq['answers'][str(n)],
+            key=f"{person['id']}_q9",
+            help=cq.get('help')
+        )
 
     st.session_state.answers[person['id']] = answers
 
@@ -226,7 +246,7 @@ elif st.session_state.step == 'planner':
 # ---------- Recommendations ----------
 elif st.session_state.step == 'recommendations':
     st.header('Our Recommendation')
-    st.caption('You can proceed with the recommended option, or explore another scenario without redoing questions.')
+    st.caption('Start with the recommendation, or explore another scenario without redoing questions.')
 
     for p in st.session_state.people:
         rec = st.session_state.planner_results[p['id']]
@@ -239,11 +259,13 @@ elif st.session_state.step == 'recommendations':
 
         care_choices = ['in_home','assisted_living','memory_care']
         pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
-        choice = st.selectbox(f"Care scenario for {p['display_name']}",
-                              [pretty[c] for c in care_choices],
-                              index=care_choices.index(default),
-                              key=f"override_{p['id']}",
-                              help='Start with the recommendation, or choose a different scenario to compare.')
+        choice = st.selectbox(
+            f"Care scenario for {p['display_name']}",
+            [pretty[c] for c in care_choices],
+            index=care_choices.index(default),
+            key=f"override_{p['id']}",
+            help='Change the scenario here if you want to compare a different path.'
+        )
         rev = {v:k for k,v in pretty.items()}
         st.session_state.care_overrides[p['id']] = rev[choice]
 
@@ -257,7 +279,7 @@ elif st.session_state.step == 'recommendations':
 elif st.session_state.step == 'calculator':
     st.header('Cost Planner')
     state = st.selectbox('Location', ['National','Washington','California','Texas','Florida'],
-                         help='State averages adjust typical market rates.')
+                         help='Adjusts for typical market rates in the selected state.')
 
     total = 0
     for p in st.session_state.people:
@@ -269,29 +291,35 @@ elif st.session_state.step == 'calculator':
 
         care_choices = ['in_home','assisted_living','memory_care']
         pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
-        scenario_label = st.selectbox(f"Care scenario for {p['display_name']} (adjust here if needed)",
-                                      [pretty[c] for c in care_choices],
-                                      index=care_choices.index(care_type),
-                                      key=f"calc_override_{pid}",
-                                      help='Change the scenario without redoing questions.')
+        scenario_label = st.selectbox(
+            f"Care scenario for {p['display_name']} (adjust here if needed)",
+            [pretty[c] for c in care_choices],
+            index=care_choices.index(care_type),
+            key=f"calc_override_{pid}",
+            help='Change the scenario without redoing questions.'
+        )
         care_type_new = {v:k for k,v in pretty.items()}[scenario_label]
         if care_type_new != care_type:
             st.session_state.care_overrides[pid] = care_type_new
             for k in [f"{pid}_room", f"{pid}_hours", f"{pid}_days"]:
-                if k in st.session_state: del st.session_state[k]
+                if k in st.session_state: 
+                    del st.session_state[k]
             care_type = care_type_new
 
+        # Mobility carryover from planner
         raw_mob = st.session_state.get('mobility_raw', {}).get(pid)
         mobility_prefill = 'Independent'
-        if raw_mob in (2, 3): mobility_prefill = 'Assisted'
-        if raw_mob == 4: mobility_prefill = 'Non-ambulatory'
+        if raw_mob in (2, 3): 
+            mobility_prefill = 'Assisted'
+        if raw_mob == 4: 
+            mobility_prefill = 'Non-ambulatory'
 
         default_care_level = 'High' if ('severe_cognitive_decline' in rec['flags'] or care_type=='memory_care') else 'Medium'
         care_level = st.selectbox('Care Level (staffing intensity)',
                                   ['Low','Medium','High'],
                                   index=['Low','Medium','High'].index(default_care_level),
                                   key=f"{pid}_care_level",
-                                  help='Higher care levels reflect more hands-on support and supervision.')
+                                  help='Higher levels reflect more hands-on support and supervision.')
 
         mobility_options = ['Independent (no device)',
                             'Assisted (cane/walker or needs help)',
@@ -307,7 +335,7 @@ elif st.session_state.step == 'calculator':
         mobility_label = st.selectbox('Mobility', mobility_options,
                                       index=mobility_options.index(prefill_label),
                                       key=f"{pid}_mobility",
-                                      help='Mobility affects staffing and environmental needs.')
+                                      help='Mobility impacts staffing and environment.')
         mobility = mobility_map_out[mobility_label]
 
         chronic_options = ['None (no ongoing conditions)',
@@ -322,7 +350,7 @@ elif st.session_state.step == 'calculator':
         chronic_label = st.selectbox('Chronic Conditions', chronic_options,
                                      index=chronic_options.index(default_chronic_label),
                                      key=f"{pid}_chronic",
-                                     help='Select the best description of ongoing medical conditions.')
+                                     help='Pick the closest description.')
         chronic = chronic_map_out[chronic_label]
 
         inp = CalcInputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
@@ -332,7 +360,7 @@ elif st.session_state.step == 'calculator':
                 if k in st.session_state: del st.session_state[k]
             room = st.selectbox('Room Type', ['Studio','1 Bedroom','Shared'],
                                 key=f"{pid}_room",
-                                help='Typical base rates vary by room size and privacy.')
+                                help='Base rates vary by room size and privacy.')
             inp.room_type = room
         else:
             if f"{pid}_room" in st.session_state: del st.session_state[f"{pid}_room"]
@@ -342,6 +370,7 @@ elif st.session_state.step == 'calculator':
             days = st.slider('Days of care per month', 0, 31, 20, 1,
                              key=f"{pid}_days",
                              help='How many days per month caregivers are scheduled.')
+            # Convert to effective daily average while also passing explicit days if engine supports it
             effective_hours_per_day = int(round((hours * max(days, 0)) / 30.0)) if days is not None else int(hours)
             try:
                 inp.in_home_hours_per_day = int(effective_hours_per_day)
@@ -357,7 +386,8 @@ elif st.session_state.step == 'calculator':
 
         monthly = calculator.monthly_cost(inp)
         st.metric('Estimated Monthly Cost', f"${monthly:,.0f}")
-        if 'va_cache' not in st.session_state: st.session_state.va_cache = {}
+        if 'va_cache' not in st.session_state: 
+            st.session_state.va_cache = {}
         st.session_state.va_cache[pid] = {'care_cost': monthly}
         total += monthly
         st.divider()
@@ -371,7 +401,7 @@ elif st.session_state.step == 'calculator':
         st.session_state.step = 'household'
         st.rerun()
 
-# ---------- Household & Assets ----------
+# ---------- Household & Budget ----------
 elif st.session_state.step == 'household':
     people = st.session_state.get('people', [])
     names = [p['display_name'] for p in people]
@@ -379,7 +409,7 @@ elif st.session_state.step == 'household':
     nameB = names[1] if len(names) > 1 else 'Person B'
 
     st.header('Household & Budget (optional)')
-    st.markdown("These fields help you see affordability. If you don't have the details handy, you can skip this part.")
+    st.markdown("These fields help you see affordability. You can skip if you don’t have details handy.")
 
     values = st.session_state.get('household_values', {})
 
@@ -448,7 +478,7 @@ elif st.session_state.step == 'household':
                     'Select status',
                     list(va_mapr.keys()),
                     key=f'{tag_prefix}_va_tier',
-                    help='Monthly caps converted from VA MAPR. Actual payment equals MAPR minus your income for VA purposes.'
+                    help='Monthly caps from VA MAPR. Actual payment equals MAPR minus income for VA purposes.'
                 )
                 max_monthly = int(va_mapr[tier])
                 st.caption(f'Estimated monthly cap for this tier: ${max_monthly:,}.')
@@ -507,7 +537,6 @@ elif st.session_state.step == 'household':
                                 help='Pick one option; related fields will appear below.')
 
         home_monthly = 0
-        reverse_draw = 0
         auto_net_proceeds = 0
 
         if decision == 'Keep':
@@ -658,14 +687,15 @@ elif st.session_state.step == 'household':
     c1, c2, c3 = st.columns(3)
     with c1:
         st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
-        st.metric('Years Funded (assets ÷ gap)', '∞' if max(overall_monthly - monthly_income,0) == 0 else f"{min(_cap_years, round((total_assets / max(overall_monthly - monthly_income,1)) / 12, 1))} years")
+        years = '∞' if max(overall_monthly - monthly_income,0) == 0 else f"{min(_cap_years, round((total_assets / max(overall_monthly - monthly_income,1)) / 12, 1))} years"
+        st.metric('Years Funded (assets ÷ gap)', years)
     with c2:
         st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
     with c3:
         gap = max(overall_monthly - monthly_income, 0)
         st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
 
-    # Store a summary cache for the details page
+    # Cache summary for details page
     st.session_state.summary_cache = {
         'per_person_costs': {p['display_name']: st.session_state.get('va_cache', {}).get(p['id'],{}).get('care_cost',0) for p in st.session_state.people},
         'household_assets_total': total_assets,
@@ -693,13 +723,11 @@ elif st.session_state.step == 'details':
     st.header('Detailed breakdown')
     s = st.session_state.get('summary_cache', {})
 
-    # Per-person care costs text table
     st.subheader('Care costs by person (monthly)')
     for name, cost in s.get('per_person_costs', {}).items():
         st.write(f"• **{name}**: ${int(cost):,}")
 
-    # Donut 1: Costs
-    st.subheader('Costs (monthly)')
+    # Costs donut
     cost_labels = ['Care (combined)', 'Home carrying', 'Home mods amortized', 'Other monthly']
     cost_values = [
         s.get('combined_care_costs',0),
@@ -707,29 +735,36 @@ elif st.session_state.step == 'details':
         s.get('costs_mods',0),
         s.get('costs_other',0)
     ]
-    fig1, ax1 = plt.subplots()
-    ax1.pie(cost_values, labels=cost_labels, wedgeprops=dict(width=0.4))
-    ax1.set(aspect="equal")
-    st.pyplot(fig1)
+    if USE_MPL:
+        fig1, ax1 = plt.subplots()
+        ax1.pie(cost_values, labels=cost_labels, wedgeprops=dict(width=0.4))
+        ax1.set(aspect="equal")
+        st.pyplot(fig1)
+    else:
+        st.altair_chart(donut_altair(cost_labels, cost_values, 'Costs (monthly)'), use_container_width=False)
 
-    # Donut 2: Income (monthly)
-    st.subheader('Income (monthly)')
+    # Income donut
     inc_labels = ['Individual income', 'Benefits (VA + LTC add-ons)', 'Household income']
     inc_values = [s.get('income_individuals',0), s.get('income_benefits',0), s.get('income_household',0)]
-    fig2, ax2 = plt.subplots()
-    ax2.pie(inc_values, labels=inc_labels, wedgeprops=dict(width=0.4))
-    ax2.set(aspect="equal")
-    st.pyplot(fig2)
+    if USE_MPL:
+        fig2, ax2 = plt.subplots()
+        ax2.pie(inc_values, labels=inc_labels, wedgeprops=dict(width=0.4))
+        ax2.set(aspect="equal")
+        st.pyplot(fig2)
+    else:
+        st.altair_chart(donut_altair(inc_labels, inc_values, 'Income (monthly)'), use_container_width=False)
 
-    # Donut 3: Assets (one-time totals)
-    st.subheader('Assets (totals)')
+    # Assets donut
     assets_total = s.get('household_assets_total',0)
-    fig3, ax3 = plt.subplots()
-    ax3.pie([assets_total], labels=[f'Household assets (${int(assets_total):,})'], wedgeprops=dict(width=0.4))
-    ax3.set(aspect="equal")
-    st.pyplot(fig3)
+    if USE_MPL:
+        fig3, ax3 = plt.subplots()
+        ax3.pie([assets_total], labels=[f'Household assets (${int(assets_total):,})'], wedgeprops=dict(width=0.4))
+        ax3.set(aspect="equal")
+        st.pyplot(fig3)
+    else:
+        st.altair_chart(donut_altair(['Household assets'], [assets_total], 'Assets (total)'), use_container_width=False)
 
-    st.caption('Charts are planning visuals. Adjust values in Household & Budget to update these numbers.')
+    st.caption('Charts update as you adjust values in Household & Budget.')
 
     cols = st.columns(2)
     with cols[0]:
