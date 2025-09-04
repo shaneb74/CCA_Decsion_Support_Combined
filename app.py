@@ -2,7 +2,6 @@
 import streamlit as st
 from pathlib import Path
 from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
-import math
 
 planner = PlannerEngine()
 calculator = CalculatorEngine()
@@ -315,8 +314,17 @@ elif st.session_state.step == 'calculator':
             days = st.slider('Days of care per month', 0, 31, 20, 1,
                              key=f"{pid}_days",
                              help='How many days per month caregivers are scheduled.')
+            # Normalize days into an effective hours/day for engines that don't read days/month
+            effective_hours_per_day = int(round((hours * max(days, 0)) / 30.0)) if days is not None else int(hours)
+            if hasattr(inp, 'in_home_hours_per_day'):
+                inp.in_home_hours_per_day = int(effective_hours_per_day)
+            else:
+                try:
+                    setattr(inp, 'in_home_hours_per_day', int(effective_hours_per_day))
+                except Exception:
+                    pass
+            # Also pass days if the engine supports it
             try:
-                inp.in_home_hours_per_day = int(hours)
                 setattr(inp, 'in_home_days_per_month', int(days))
             except Exception:
                 pass
@@ -396,8 +404,10 @@ elif st.session_state.step == 'household':
             st.write(f'**{person_name}**')
             va_path = st.radio(
                 f'Choose an option for {person_name}:',
-                ['I already receive or qualify for VA pension/Aid & Attendance',
+                ['Not a veteran / No VA pension',
+                 'I already receive or qualify for VA pension/Aid & Attendance',
                  'I served, but I’m not sure if I qualify'],
+                index=0,  # default to No VA
                 key=f'{tag_prefix}_va_path'
             )
             va_monthly = 0
@@ -414,7 +424,7 @@ elif st.session_state.step == 'household':
                 va_monthly = st.number_input('Monthly VA payment (enter actual if known; otherwise use cap)',
                                              min_value=0, step=25, value=max_monthly, key=f'{tag_prefix}_va_actual')
                 va_detail = tier
-            else:
+            elif va_path.startswith('I served'):
                 st.info('Quick check (not exhaustive):')
                 wartime = st.checkbox('Served during a wartime period', key=f'{tag_prefix}_wartime')
                 age_or_dis = st.checkbox('65+ or permanently and totally disabled', key=f'{tag_prefix}_age_dis')
@@ -427,6 +437,9 @@ elif st.session_state.step == 'household':
                 else:
                     st.warning('Based on these answers, VA pension may not apply. You can still check with a VSO.')
                 va_detail = 'Wizard: pending application'
+            else:
+                va_monthly = 0
+                va_detail = 'No VA pension'
             return va_monthly, va_detail
 
         if len(st.session_state.people) > 1:
