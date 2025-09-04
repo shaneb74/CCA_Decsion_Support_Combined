@@ -1,24 +1,25 @@
-
 # app.py
 import streamlit as st
 import json
 from pathlib import Path
 from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
 
-DATA_DIR = Path('/mnt/data')
+# Engines resolve their own data paths
+planner = PlannerEngine()
+calculator = CalculatorEngine()
 
-QA_PATH = DATA_DIR / 'question_answer_logic_FINAL_UPDATED.json'
-REC_PATH = DATA_DIR / 'recommendation_logic_FINAL_MASTER_UPDATED.json'
-CALC_PATH = DATA_DIR / 'senior_care_calculator_v5_full_with_instructions_ui.json'
-OVERLAY_PATH = DATA_DIR / 'senior_care_modular_overlay.json'
-
-planner = PlannerEngine(str(QA_PATH), str(REC_PATH))
-calculator = CalculatorEngine(str(CALC_PATH), str(OVERLAY_PATH))
+# Friendly guard in case someone forgets the data folder
+DATA_DIR = Path(__file__).resolve().parent / "data"
+if not DATA_DIR.exists():
+    st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭")
+    st.error("Missing required `data/` folder with JSON files. "
+             "Please add the four JSON configs under `data/` and redeploy.")
+    st.stop()
 
 st.set_page_config(page_title='Senior Navigator • Planner + Cost', page_icon='🧭', layout='centered')
 
 def reset_all():
-    for k in ['step','people','answers','planner_results','current_person','handoff']:
+    for k in ['step','people','answers','planner_results','current_person','handoff','combined_monthly_cost','household_values']:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -32,7 +33,7 @@ st.sidebar.button('Start over', on_click=reset_all)
 # ---------- Step 0: Intro ----------
 if st.session_state.step == 'intro':
     st.title('Let’s take this one step at a time')
-    st.markdown('''
+    st.markdown("""
 Choosing senior living or in-home support can feel overwhelming.  
 This tool is here to make it easier.
 
@@ -42,7 +43,7 @@ then we’ll recommend a care option and walk through the costs.
 
 **There are no right or wrong answers. Just answer as best you can.**  
 We’ll guide you every step of the way.
-''')
+""")
     st.info('This process usually takes about 10–15 minutes. You can pause at any point.')
     if st.button('Start'):
         st.session_state.step = 'audience'
@@ -60,10 +61,10 @@ elif st.session_state.step == 'audience':
         c1, c2 = st.columns(2)
         with c1:
             name1 = st.text_input('Parent 1 name', value='Mom', key='p1_name')
-            age1 = st.selectbox('Parent 1 age', ['65–74','75–84','85+'], key='p1_age')
+            _ = st.selectbox('Parent 1 age', ['65–74','75–84','85+'], key='p1_age')
         with c2:
             name2 = st.text_input('Parent 2 name', value='Dad', key='p2_name')
-            age2 = st.selectbox('Parent 2 age', ['65–74','75–84','85+'], key='p2_age')
+            _ = st.selectbox('Parent 2 age', ['65–74','75–84','85+'], key='p2_age')
         people = [
             {'id':'A','display_name':name1,'relationship':'parent'},
             {'id':'B','display_name':name2,'relationship':'parent'}
@@ -92,13 +93,13 @@ elif st.session_state.step == 'planner':
     person = people[i]
 
     st.header(f"Care Plan Questions for {person['display_name']}")
-    st.markdown('''These questions help us understand daily routines, health, and support.  
-Answer as best you can—every bit of information helps.''')
+    st.markdown("""These questions help us understand daily routines, health, and support.  
+Answer as best you can—every bit of information helps.""")
     st.caption(f"Person {i+1} of {len(people)}")
 
-    # Render 8 base questions
+    # Render 8 base questions using planner.qa which is already loaded
     answers = st.session_state.answers.get(person['id'], {})
-    qa = json.load(open(QA_PATH))
+    qa = planner.qa
     for idx, q in enumerate(qa.get('questions', []), start=1):
         val = answers.get(f'q{idx}')
         sel = st.radio(
@@ -117,7 +118,7 @@ Answer as best you can—every bit of information helps.''')
             a = ans.get(f'q{idx}')
             if a is None:
                 continue
-            for domain, rules in q.get('trigger', {}).items():
+            for _, rules in q.get('trigger', {}).items():
                 for rule in rules:
                     if rule.get('answer') == a:
                         flags.add(rule.get('flag'))
@@ -128,7 +129,11 @@ Answer as best you can—every bit of information helps.''')
     if 'severe_cognitive_decline' in flags and qa.get('conditional_questions'):
         cq = qa['conditional_questions'][0]
         st.warning('It looks like 24/7 supervision may be needed.')
-        conditional_answer = st.radio(cq['question'], options=[1,2], format_func=lambda n: cq['answers'][str(n)], key=f"{person['id']}_q9")
+        conditional_answer = st.radio(
+            cq['question'], options=[1,2],
+            format_func=lambda n: cq['answers'][str(n)],
+            key=f"{person['id']}_q9"
+        )
 
     st.session_state.answers[person['id']] = answers
 
@@ -142,8 +147,14 @@ Answer as best you can—every bit of information helps.''')
             st.rerun()
     with cols[1]:
         if st.button('Next'):
-            result = planner.run(answers, conditional_answer=conditional_answer)
-            st.session_state.planner_results[person['id']] = result.__dict__
+            result: PlannerResult = planner.run(answers, conditional_answer=conditional_answer)
+            st.session_state.planner_results[person['id']] = {
+                'care_type': result.care_type,
+                'flags': result.flags,
+                'scores': result.scores,
+                'reasons': result.reasons,
+                'advisory': result.advisory
+            }
             if i+1 < len(people):
                 st.session_state.current_person = i+1
                 st.rerun()
@@ -171,6 +182,8 @@ elif st.session_state.step == 'recommendations':
 elif st.session_state.step == 'calculator':
     st.header('Cost Planner')
 
+    # Location/state affects multipliers
+    # Use a short list here; you can expand to full 50 later based on your lookups
     state = st.selectbox('Location', ['National','Washington','California','Texas','Florida'])
 
     total = 0
@@ -180,13 +193,18 @@ elif st.session_state.step == 'calculator':
 
         st.subheader(f"{p['display_name']} — Recommended: {care_type.replace('_',' ').title()}")
 
+        # Prefills from flags
         default_care_level = 'High' if ('severe_cognitive_decline' in rec['flags'] or care_type=='memory_care') else 'Medium'
         default_mobility = 'Assisted' if any(f in rec['flags'] for f in ['high_mobility_dependence','high_safety_concern']) else 'Independent'
         default_chronic = 'Multiple/Complex' if 'severe_cognitive_decline' in rec['flags'] else 'Some'
 
         care_level = st.select_slider('Care Level', ['Low','Medium','High'], value=default_care_level, key=f"{p['id']}_care_level")
-        mobility = st.selectbox('Mobility', ['Independent','Assisted','Non-ambulatory'], index=['Independent','Assisted','Non-ambulatory'].index(default_mobility), key=f"{p['id']}_mobility")
-        chronic = st.selectbox('Chronic Conditions', ['None','Some','Multiple/Complex'], index=['None','Some','Multiple/Complex'].index(default_chronic), key=f"{p['id']}_chronic")
+        mobility = st.selectbox('Mobility', ['Independent','Assisted','Non-ambulatory'],
+                                index=['Independent','Assisted','Non-ambulatory'].index(default_mobility),
+                                key=f"{p['id']}_mobility")
+        chronic = st.selectbox('Chronic Conditions', ['None','Some','Multiple/Complex'],
+                               index=['None','Some','Multiple/Complex'].index(default_chronic),
+                               key=f"{p['id']}_chronic")
 
         inp = CalcInputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
 
@@ -198,18 +216,24 @@ elif st.session_state.step == 'calculator':
             inp.in_home_hours_per_day = int(hours)
 
         monthly = calculator.monthly_cost(inp)
-        st.metric('Estimated Monthly Cost', f"${{monthly:,.0f}}")
+        st.metric('Estimated Monthly Cost', f"${monthly:,.0f}")
         total += monthly
         st.divider()
 
     st.subheader('Combined Total')
-    st.metric('Estimated Combined Monthly Cost', f"${{total:,.0f}}")
+    st.session_state.combined_monthly_cost = total
+    st.metric('Estimated Combined Monthly Cost', f"${total:,.0f}")
+
     st.info('Remember, these are estimates to help you plan. You can explore different scenarios.')
+
+    if st.button('Add Household & Assets (optional)'):
+        st.session_state.step = 'household'
+        st.rerun()
 
 # ---------- Step 5: Household & Assets ----------
 elif st.session_state.step == 'household':
     st.header('Household & Budget (optional)')
-    st.markdown('''These fields help you see affordability. If you don't have the details handy, you can skip this part.''')
+    st.markdown("These fields help you see affordability. If you don't have the details handy, you can skip this part.")
 
     values = st.session_state.get('household_values', {})
 
@@ -230,12 +254,17 @@ elif st.session_state.step == 'household':
     col1, col2 = st.columns(2)
     with col1:
         a_va = currency_input('VA benefit — Person A', 'va_benefit_person_a', 0)
-        a_ltc = st.selectbox('Long-Term Care insurance — Person A', ['No','Yes'], index=0 if values.get('ltc_insurance_person_a','No')=='No' else 1, key='ltc_insurance_person_a')
+        a_ltc = st.selectbox('Long-Term Care insurance — Person A', ['No','Yes'],
+                             index=0 if values.get('ltc_insurance_person_a','No')=='No' else 1,
+                             key='ltc_insurance_person_a')
     with col2:
         b_va = currency_input('VA benefit — Person B', 'va_benefit_person_b', 0)
-        b_ltc = st.selectbox('Long-Term Care insurance — Person B', ['No','Yes'], index=0 if values.get('ltc_insurance_person_b','No')=='No' else 1, key='ltc_insurance_person_b')
+        b_ltc = st.selectbox('Long-Term Care insurance — Person B', ['No','Yes'],
+                             index=0 if values.get('ltc_insurance_person_b','No')=='No' else 1,
+                             key='ltc_insurance_person_b')
 
-    keep_home = st.checkbox('We will keep the home (include home carrying costs)', value=values.get('keep_home', False), key='keep_home')
+    keep_home = st.checkbox('We will keep the home (include home carrying costs)',
+                            value=values.get('keep_home', False), key='keep_home')
 
     home_monthly = 0
     if keep_home:
@@ -266,18 +295,18 @@ elif st.session_state.step == 'household':
     other_assets = currency_input('Other liquid assets', 'other_assets', 0)
     home_equity = currency_input('Home equity', 'home_equity', 0)
 
-    # Income calc
-    # Pull configured LTC add from calculator settings if available, else default 1800
-    _settings = json.load(open(CALC_PATH)).get('settings', {})
+    # Income calc using settings for LTC add and cap years
+    _settings = calculator.settings
     _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
+    _cap_years = int(_settings.get('display_cap_years_funded', 30))
+
     monthly_income = a_ss + a_pn + b_ss + b_pn + a_va + b_va
     if a_ltc == 'Yes':
         monthly_income += _ltc_add
     if b_ltc == 'Yes':
         monthly_income += _ltc_add
-    st.metric('Total Monthly Income', f"${{monthly_income:,.0f}}")
+    st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
 
-    # Pull combined monthly care cost computed earlier
     combined_cost = st.session_state.get('combined_monthly_cost', 0)
     optional_costs = home_monthly + medicare + dvh + mods + debts + phone + personal + travel + auto + auto_ins + pets + other_opt
     overall_monthly = combined_cost + optional_costs
@@ -285,12 +314,11 @@ elif st.session_state.step == 'household':
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        st.metric('Monthly Care + Selected Costs', f"${{overall_monthly:,.0f}}")
+        st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
     with c2:
         gap = max(overall_monthly - monthly_income, 0)
-        st.metric('Estimated Monthly Gap', f"${{gap:,.0f}}")
+        st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
 
-    _cap_years = int(_settings.get('display_cap_years_funded', 30))
     total_assets = other_assets + home_equity
     years_funded = float('inf') if gap == 0 else min(_cap_years, round((total_assets / max(gap,1)) / 12, 1))
     st.metric('Years Funded (assets ÷ gap)', '∞' if gap == 0 else f"{years_funded} years")
