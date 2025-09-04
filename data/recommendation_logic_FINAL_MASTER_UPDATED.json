@@ -1,0 +1,135 @@
+{
+  "scoring": {
+    "in_home": {
+      "care_burden": 1,
+      "social_isolation": 1,
+      "financial_feasibility": 1,
+      "home_safety": 1,
+      "geographic_access": 1,
+      "cognitive_function": 1
+    },
+    "assisted_living": {
+      "care_burden": 3,
+      "social_isolation": 3,
+      "dependence": 3,
+      "home_safety": 2,
+      "geographic_access": 2,
+      "cognitive_function": 2
+    }
+  },
+  "dependence_flag_logic": {
+    "trigger_if_flags": [
+      "high_dependence",
+      "high_mobility_dependence",
+      "no_support",
+      "severe_cognitive_decline",
+      "high_safety_concern"
+    ],
+    "criteria": "Trigger if any 2 or more of the above flags are present"
+  },
+  "dependence_flag": {
+    "criteria_met": true,
+    "message": "You have multiple areas of dependence for daily tasks, mobility, and safety. Assisted Living is a safer and more supportive environment for your needs."
+  },
+  "social_isolation_warning": {
+    "trigger_if_flags": [
+      "high_risk"
+    ],
+    "message": "Your level of social isolation may impact your well-being. Assisted Living offers community and engagement that could benefit your emotional health."
+  },
+  "final_decision_thresholds": {
+    "assisted_living": "Recommend if assisted_living score >= 6",
+    "in_home_with_support": "Recommend if in_home score >= 6 and assisted_living score < 6"
+  },
+  "final_recommendation": {
+    "memory_care_required_override": {
+      "trigger_if_flags": [
+        "memory_care_required"
+      ],
+      "criteria": "Always trigger if this flag is present",
+      "message": "Memory Care is recommended because 24/7 supervision is required and cannot be arranged at home."
+    },
+    "memory_care_override": {
+      "trigger_if_flags": [
+        "severe_cognitive_decline"
+      ],
+      "criteria": "Always trigger if this flag is present",
+      "message": "Due to severe cognitive decline, Memory Care is likely the safest and most supportive option unless 24/7 in-home care is available."
+    },
+    "assisted_living": {
+      "message": "Assisted Living is recommended. It offers 24/7 care, social engagement, and a safer living environment for your current needs."
+    },
+    "moderate_needs_assisted_living_recommendation": {
+      "criteria": "Use when assisted_living_score >= 6 AND in_home_score >= 3 AND moderate_dependence, moderate_mobility, and moderate_cognitive_decline are all present",
+      "message": "Assisted Living is recommended based on moderate needs in mobility, memory, and daily support. However, with significant in-home support services and consistent caregiver involvement, it may still be possible to safely remain at home \u2014 though this should be closely monitored. A discussion with your care advisor can help determine which option is best for your unique situation."
+    },
+    "close_to_assisted_living_with_moderate_needs": {
+      "criteria": "Use when assisted_living_score >= 5, in_home_score >= 3, and both moderate_dependence and moderate_cognitive_decline are present",
+      "message": "You\u2019re currently managing at home, but your cognitive changes and need for regular support suggest that more assistance may soon be needed. While In-Home Care is still viable, we recommend making a proactive plan. Assisted Living may become a more appropriate and supportive environment if needs continue to grow."
+    },
+    "balanced_recommendation": {
+      "message": "In-Home Care with support is a viable option, especially with consistent caregiver involvement and safety measures in place. However, due to signs of increasing need \u2014 such as moderate dependence or memory decline \u2014 Assisted Living may become the more sustainable and socially enriching option over time.",
+      "criteria": "Use when assisted_living_score >= 6 AND in_home_score >= 3 AND none of the following are present: high_dependence, high_mobility_dependence, no_support, high_safety_concern"
+    },
+    "in_home_with_mobility_challenges": {
+      "criteria": "Use when assisted_living_score >= 5 and in_home_score >= 3, and high_mobility_dependence is present, but there are no cognitive decline flags",
+      "message": "Your cognitive and emotional well-being are strong, and you're managing well in many areas. However, your mobility limitations and limited access to essential services suggest that daily activities may be more difficult to manage over time. With support, it is still possible to remain at home \u2014 especially if mobility aids, transportation, and regular assistance are in place. Assisted Living could also help simplify your routine and improve safety and ease of access."
+    },
+    "in_home_possible_with_cognitive_and_safety_risks": {
+      "criteria": "Use when in_home_score >= 3 and assisted_living_score >= 3 and flags include cognitive and safety concerns",
+      "message": "Your current level of independence, support, and access to services makes it possible to continue living at home. However, your cognitive changes and home safety concerns raise risks that should not be ignored. We recommend that you consult with a care advisor to explore strategies for addressing these issues \u2014 including home modifications and memory support \u2014 to remain safely at home. Assisted Living may become necessary in the future if risks increase or support declines."
+    },
+    "in_home_with_support_and_financial_needs": {
+      "criteria": "Use when in_home score >= 6, assisted_living score < 6, and needs_financial_assistance flag is present",
+      "message": "In-Home Care with some additional support is a good option. Consider periodic check-ins or day services to stay engaged and safe. Due to your financial situation, we recommend speaking with an advisor to explore resources that can help make staying at home financially sustainable."
+    },
+    "in_home_low_support_financial_needs": {
+      "criteria": "Use when needs_financial_assistance and limited_support are present, and there are no safety, cognitive, or mobility decline flags",
+      "message": "You appear to be managing your day-to-day activities well, with good health and independence. In-Home Care is a suitable option for you at this time. However, your limited caregiver support and financial concerns suggest that staying at home long-term may require some creative planning. We recommend speaking with a care advisor to explore community-based or lower-cost services that can help support your independence while staying within your budget."
+    },
+    "independent_with_safety_concern": {
+      "criteria": "Use when individual is fully independent and triggers moderate_safety_concern or high_safety_concern but does not meet other risk thresholds",
+      "message": "You're managing your daily life with strong independence, social engagement, and good support. However, since you've indicated some concerns about safety at home, it's a good idea to explore ways to make your living environment even safer \u2014 such as home modifications, alert systems, or a safety assessment. These small changes can help you remain confidently at home for the long term."
+    },
+    "independent_no_support_risk": {
+      "criteria": "Use when individual is independent and safe but has no regular caregiver support (no_support), and no cognitive, safety, or mobility decline",
+      "message": "In-Home Care is appropriate since your care needs are currently minimal and your home is safe. However, because you don\u2019t have regular support from family or a caregiver, it\u2019s important to put a plan in place. We recommend adding occasional support or check-ins to help ensure your independence remains sustainable over time."
+    },
+    "low_need_in_home_reassurance": {
+      "criteria": "Use when in_home_score >= 1, assisted_living_score == 0, and no dependence flags present",
+      "message": "You\u2019re doing very well overall, with only minimal need for support. In-Home Care is a great option for you at this stage. Continue monitoring your needs, and don\u2019t hesitate to explore more assistance later if anything changes. For now, small supports at home \u2014 like occasional help or check-ins \u2014 should be all you need to remain safe and independent."
+    },
+    "in_home_with_support": {
+      "message": "In-Home Care with some additional support is a good option. Consider periodic check-ins or day services to stay engaged and safe."
+    },
+    "in_home_with_uncertain_support": {
+      "criteria": "Use when no other recommendation is triggered but any of the following flags are present: limited_support, moderate_risk, high_risk, moderate_dependence, moderate_mobility, moderate_safety_concern, low_access, very_low_access",
+      "message": "**In-Home Care may be appropriate depending on your support system.** If you have help at home and want to stay there, In-Home Care may work well. But if you're feeling isolated or it's hard to get the support you need, Assisted Living could provide a safer and more engaging environment. Speaking with one of our agents can help you decide the best fit."
+    },
+    "low_risk_reassurance": {
+      "criteria": "Use when no meaningful risk flags are triggered: no dependence, cognitive, isolation, or safety concerns",
+      "message": "**In-Home Care is an appropriate long-term approach, even if you may not need services today.** You're doing well overall and managing your needs independently. Continue checking in periodically, and add support if your situation changes in the future."
+    }
+  },
+  "memory_care_override": {
+    "trigger_if_flags": [
+      "severe_cognitive_decline"
+    ],
+    "criteria": "Always trigger if this flag is present",
+    "message": "Due to severe cognitive decline, Memory Care is likely the safest and most supportive option unless 24/7 in-home care is available."
+  },
+  "memory_care_required_override": {
+    "trigger_if_flags": [
+      "memory_care_required"
+    ],
+    "criteria": "Always trigger if this flag is present",
+    "message": "Memory Care is recommended because 24/7 supervision is required and cannot be arranged at home."
+  },
+  "cognitive_decline_warning": {
+    "trigger_if_flags": [
+      "moderate_cognitive_decline"
+    ],
+    "criteria": "Show this message if moderate_cognitive_decline is present and severe_cognitive_decline is not",
+    "message": "There are signs of memory or cognitive challenges that should be monitored. In-Home Care is still a viable option, but any further decline should prompt consideration of more supportive environments like Assisted Living or Memory Care."
+  }
+}

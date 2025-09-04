@@ -1,0 +1,193 @@
+{
+  "questions": [
+    {
+      "question": "How would you describe your financial situation when it comes to paying for care?",
+      "answers": {
+        "1": "I don\u2019t worry about money\u2014I can afford any care I need.",
+        "2": "I\u2019m financially comfortable, but I want to stay cost-conscious.",
+        "3": "I can afford some care, but cost is a major factor.",
+        "4": "I worry about how I\u2019ll pay for care and may need financial help."
+      },
+      "trigger": {
+        "financial_feasibility": [
+          {
+            "answer": 1,
+            "flag": "can_afford_assisted_living"
+          },
+          {
+            "answer": 2,
+            "flag": "can_afford_in_home"
+          },
+          {
+            "answer": 3,
+            "flag": "needs_financial_assistance"
+          },
+          {
+            "answer": 4,
+            "flag": "needs_financial_assistance"
+          }
+        ]
+      }
+    },
+    {
+      "question": "How independent are you with daily tasks such as bathing, dressing, and preparing meals?",
+      "answers": {
+        "1": "I\u2019m fully independent and handle all tasks on my own.",
+        "2": "I occasionally need reminders or light assistance.",
+        "3": "I need help with some of these tasks regularly.",
+        "4": "I rely on someone else for most daily tasks."
+      },
+      "trigger": {
+        "care_burden": [
+          {
+            "answer": 3,
+            "flag": "moderate_dependence"
+          },
+          {
+            "answer": 4,
+            "flag": "high_dependence"
+          }
+        ]
+      }
+    },
+    {
+      "question": "How would you describe your mobility?",
+      "answers": {
+        "1": "I walk easily without any support.",
+        "2": "I use a cane or walker for longer distances.",
+        "3": "I need assistance for most movement around the home.",
+        "4": "I am mostly immobile or need a wheelchair."
+      },
+      "trigger": {
+        "care_burden": [
+          {
+            "answer": 3,
+            "flag": "moderate_mobility"
+          },
+          {
+            "answer": 4,
+            "flag": "high_mobility_dependence"
+          }
+        ]
+      }
+    },
+    {
+      "question": "How often do you engage in social activities or interact with others?",
+      "answers": {
+        "1": "Frequently\u2014daily or almost daily.",
+        "2": "Occasionally\u2014at least weekly.",
+        "3": "Rarely\u2014maybe once or twice a month.",
+        "4": "Almost never\u2014I often feel isolated."
+      },
+      "trigger": {
+        "social_isolation": [
+          {
+            "answer": 3,
+            "flag": "moderate_risk"
+          },
+          {
+            "answer": 4,
+            "flag": "high_risk"
+          }
+        ]
+      }
+    },
+    {
+      "question": "Do you have a caregiver or family member who can help regularly?",
+      "answers": {
+        "1": "Yes, I have someone with me most of the time.",
+        "2": "Yes, I have support a few days a week.",
+        "3": "Infrequently\u2014someone checks in occasionally.",
+        "4": "No regular caregiver or support available."
+      },
+      "trigger": {
+        "caregiver_support": [
+          {
+            "answer": 3,
+            "flag": "limited_support"
+          },
+          {
+            "answer": 4,
+            "flag": "no_support"
+          }
+        ]
+      }
+    },
+    {
+      "question": "How would you rate your memory or cognitive function?",
+      "answers": {
+        "1": "Sharp\u2014I have no issues.",
+        "2": "Occasionally forgetful, but nothing serious.",
+        "3": "Noticeable memory problems that affect daily tasks.",
+        "4": "Severe memory issues or diagnosed cognitive decline."
+      },
+      "trigger": {
+        "cognitive_function": [
+          {
+            "answer": 3,
+            "flag": "moderate_cognitive_decline"
+          },
+          {
+            "answer": 4,
+            "flag": "severe_cognitive_decline"
+          }
+        ]
+      }
+    },
+    {
+      "question": "How safe do you feel in your home in terms of fall risk, emergencies, or managing on your own?",
+      "answers": {
+        "1": "Very safe\u2014I have everything I need.",
+        "2": "Mostly safe, but a few things concern me.",
+        "3": "Sometimes I feel unsafe or unsure.",
+        "4": "I often feel unsafe or at risk."
+      },
+      "trigger": {
+        "home_safety": [
+          {
+            "answer": 3,
+            "flag": "moderate_safety_concern"
+          },
+          {
+            "answer": 4,
+            "flag": "high_safety_concern"
+          }
+        ]
+      }
+    },
+    {
+      "question": "How accessible are services like pharmacies, grocery stores, and doctor\u2019s offices from your home?",
+      "answers": {
+        "1": "I can walk to most of them easily.",
+        "2": "I can drive or get a ride with little trouble.",
+        "3": "It\u2019s difficult to get to these places without help.",
+        "4": "I have no easy access and need assistance to get anywhere."
+      },
+      "trigger": {
+        "geographic_access": [
+          {
+            "answer": 3,
+            "flag": "low_access"
+          },
+          {
+            "answer": 4,
+            "flag": "very_low_access"
+          }
+        ]
+      }
+    }
+  ],
+  "conditional_questions": [
+    {
+      "trigger": "severe_cognitive_decline",
+      "question": "Do you have or can you arrange for 24/7 in-home care and supervision?",
+      "answers": {
+        "1": "Yes",
+        "2": "No"
+      },
+      "flag_on_answer": {
+        "2": "memory_care_required"
+      }
+    }
+  ]
+}
