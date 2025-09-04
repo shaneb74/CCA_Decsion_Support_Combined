@@ -204,13 +204,13 @@ elif st.session_state.step == 'calculator':
             inp.in_home_hours_per_day = int(hours)
 
         monthly = calculator.monthly_cost(inp)
-        st.metric('Estimated Monthly Cost', f"${{monthly:,.0f}}")
+        st.metric('Estimated Monthly Cost', f"${monthly:,.0f}")
         total += monthly
         st.divider()
 
     st.subheader('Combined Total')
     st.session_state.combined_monthly_cost = total
-    st.metric('Estimated Combined Monthly Cost', f"${{total:,.0f}}")
+    st.metric('Estimated Combined Monthly Cost', f"${total:,.0f}")
     st.info('Remember, these are estimates to help you plan. You can explore different scenarios.')
 
     if st.button('Add Household & Assets (optional)'):
@@ -289,7 +289,7 @@ elif st.session_state.step == 'household':
     monthly_income = a_ss + a_pn + b_ss + b_pn + a_va + b_va
     if a_ltc == 'Yes': monthly_income += _ltc_add
     if b_ltc == 'Yes': monthly_income += _ltc_add
-    st.metric('Total Monthly Income', f"${{monthly_income:,.0f}}")
+    st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
 
     combined_cost = st.session_state.get('combined_monthly_cost', 0)
     optional_costs = home_monthly + medicare + dvh + mods + debts + phone + personal + travel + auto + auto_ins + pets + other_opt
@@ -298,10 +298,10 @@ elif st.session_state.step == 'household':
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        st.metric('Monthly Care + Selected Costs', f"${{overall_monthly:,.0f}}")
+        st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
     with c2:
         gap = max(overall_monthly - monthly_income, 0)
-        st.metric('Estimated Monthly Gap', f"${{gap:,.0f}}")
+        st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
 
     total_assets = other_assets + home_equity
     years_funded = float('inf') if gap == 0 else min(_cap_years, round((total_assets / max(gap,1)) / 12, 1))
