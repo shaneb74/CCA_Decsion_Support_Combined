@@ -4,15 +4,15 @@ import streamlit as st
 from pathlib import Path
 from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
 
-# Instantiate engines (they resolve data/ internally)
+# Instantiate engines
 planner = PlannerEngine()
 calculator = CalculatorEngine()
 
-# Guard for missing data
+# Setup
 DATA_DIR = Path(__file__).resolve().parent / "data"
 st.set_page_config(page_title='Senior Navigator • Planner + Cost', page_icon='🧭', layout='centered')
 if not DATA_DIR.exists():
-    st.error("Missing required `data/` folder with JSON files. Add the four JSON configs under `data/` and redeploy.")
+    st.error("Missing required `data/` folder with JSON files.")
     st.stop()
 
 def reset_all():
@@ -34,12 +34,12 @@ if st.session_state.step == 'intro':
 Choosing senior living or in-home support can feel overwhelming.  
 This tool is here to make it easier.
 
-It\'s based on years of experience helping families make these decisions.  
-We\'ll start with a few simple questions about you or your loved one,  
-then we\'ll recommend a care option and walk through the costs.
+It's based on years of experience helping families make these decisions.  
+We'll start with a few simple questions about you or your loved one,  
+then we'll recommend a care option and walk through the costs.
 
 **There are no right or wrong answers. Just answer as best you can.**  
-We\'ll guide you every step of the way.
+We'll guide you every step of the way.
 """)
     st.info('This process usually takes about 10–15 minutes. You can pause at any point.')
     if st.button('Start'):
@@ -67,7 +67,8 @@ elif st.session_state.step == 'audience':
             {'id':'B','display_name':name2,'relationship':'parent'}
         ]
     else:
-        name = st.text_input('Name', value='Alex', key='p_name')
+        default = 'Alex' if choice != 'My parent' else 'Mom'
+        name = st.text_input('Name', value=default, key='p_name')
         _ = st.selectbox('Approximate age', ['65–74','75–84','85+'], key='p_age')
         rel_map = {'Myself':'self','My spouse/partner':'spouse','My parent':'parent','Someone else':'other'}
         people = [{'id':'A','display_name':name,'relationship':rel_map.get(choice,'other')}]
@@ -81,19 +82,18 @@ elif st.session_state.step == 'audience':
         st.session_state.step = 'planner'
         st.rerun()
 
-# ---------- Step 2: Guided Care Plan (per person) ----------
+# ---------- Step 2: Guided Care Plan ----------
 elif st.session_state.step == 'planner':
     people = st.session_state.get('people', [])
     i = st.session_state.get('current_person', 0)
     person = people[i]
 
     st.header(f"Care Plan Questions for {person['display_name']}")
-    st.markdown("""These questions help us understand daily routines, health, and support.  
-Answer as best you can—every bit of information helps.""")
     st.caption(f"Person {i+1} of {len(people)}")
+    st.markdown("These questions help us understand daily routines, health, and support. Answer as best you can.")
 
     answers = st.session_state.answers.get(person['id'], {})
-    qa = planner.qa  # already loaded by engine
+    qa = planner.qa
     for idx, q in enumerate(qa.get('questions', []), start=1):
         val = answers.get(f'q{idx}')
         sel = st.radio(
@@ -105,19 +105,19 @@ Answer as best you can—every bit of information helps.""")
         )
         answers[f'q{idx}'] = sel
 
-    # Infer flags to see if conditional Q applies
-    def infer_flags_from_answers(ans: dict) -> set:
-        flags = set()
+    # Conditional
+    def infer_flags(ans: dict) -> set:
+        f = set()
         for idx, q in enumerate(qa.get('questions', []), start=1):
             a = ans.get(f'q{idx}')
             if a is None: continue
             for _, rules in q.get('trigger', {}).items():
                 for rule in rules:
                     if rule.get('answer') == a:
-                        flags.add(rule.get('flag'))
-        return flags
+                        f.add(rule.get('flag'))
+        return f
 
-    flags = infer_flags_from_answers(answers)
+    flags = infer_flags(answers)
     conditional_answer = None
     if 'severe_cognitive_decline' in flags and qa.get('conditional_questions'):
         cq = qa['conditional_questions'][0]
@@ -128,15 +128,15 @@ Answer as best you can—every bit of information helps.""")
 
     st.session_state.answers[person['id']] = answers
 
-    cols = st.columns([1,1])
-    with cols[0]:
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button('Back'):
             if i == 0:
                 st.session_state.step = 'audience'
             else:
                 st.session_state.current_person = i-1
             st.rerun()
-    with cols[1]:
+    with c2:
         if st.button('Next'):
             result: PlannerResult = planner.run(answers, conditional_answer=conditional_answer)
             st.session_state.planner_results[person['id']] = {
@@ -161,10 +161,10 @@ elif st.session_state.step == 'recommendations':
         st.subheader(f"{p['display_name']}: {rec['care_type'].replace('_',' ').title()}")
         for r in rec.get('reasons', []):
             st.write('• ' + r)
-        st.success('This is a starting point. You\'ll be able to adjust details next.')
+        st.success('This is a starting point. You’ll be able to adjust details next.')
         st.divider()
 
-    st.markdown('Next, we\'ll walk through costs step by step, so you can see what this care might mean for your household budget.')
+    st.markdown('Next, we’ll walk through costs step by step, so you can see what this care might mean for your household budget.')
     if st.button('See Costs'):
         st.session_state.step = 'calculator'
         st.rerun()
@@ -172,7 +172,6 @@ elif st.session_state.step == 'recommendations':
 # ---------- Step 4: Calculator ----------
 elif st.session_state.step == 'calculator':
     st.header('Cost Planner')
-
     state = st.selectbox('Location', ['National','Washington','California','Texas','Florida'])
 
     total = 0
@@ -219,91 +218,128 @@ elif st.session_state.step == 'calculator':
 
 # ---------- Step 5: Household & Assets ----------
 elif st.session_state.step == 'household':
+    people = st.session_state.get('people', [])
+    names = [p['display_name'] for p in people]
+    nameA = names[0] if names else 'Person A'
+    nameB = names[1] if len(names) > 1 else 'Person B'
+
     st.header('Household & Budget (optional)')
-    st.markdown("These fields help you see affordability. If you don\'t have the details handy, you can skip this part.")
+    st.markdown("These fields help you see affordability. If you don't have the details handy, you can skip this part.")
 
     values = st.session_state.get('household_values', {})
 
     def currency_input(label, key, default=0):
         return st.number_input(label, min_value=0, step=50, value=int(values.get(key, default)), key=key)
 
-    # Income groups
-    st.subheader('Monthly Income')
-    colA, colB = st.columns(2)
-    with colA:
-        a_ss = currency_input('Social Security — Person A', 'social_security_person_a', 0)
-        a_pn = currency_input('Pension — Person A', 'pension_person_a', 0)
-    with colB:
-        b_ss = currency_input('Social Security — Person B', 'social_security_person_b', 0)
-        b_pn = currency_input('Pension — Person B', 'pension_person_b', 0)
+    # Income section (per person + household)
+    with st.expander('Monthly Income', expanded=True):
+        cols = st.columns(2 if len(people) > 1 else 1)
+        with cols[0]:
+            a_ss = currency_input(f'Social Security — {nameA}', 'a_social_security', 0)
+            a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
+            a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
+        if len(people) > 1:
+            with cols[1]:
+                b_ss = currency_input(f'Social Security — {nameB}', 'b_social_security', 0)
+                b_pn = currency_input(f'Pension — {nameB}', 'b_pension', 0)
+                b_other = currency_input(f'Other income — {nameB}', 'b_other_income', 0)
+        else:
+            b_ss = b_pn = b_other = 0
 
-    st.subheader('Benefits')
-    col1, col2 = st.columns(2)
-    with col1:
-        a_va = currency_input('VA benefit — Person A', 'va_benefit_person_a', 0)
-        a_ltc = st.selectbox('Long-Term Care insurance — Person A', ['No','Yes'],
-                             index=0 if values.get('ltc_insurance_person_a','No')=='No' else 1,
-                             key='ltc_insurance_person_a')
-    with col2:
-        b_va = currency_input('VA benefit — Person B', 'va_benefit_person_b', 0)
-        b_ltc = st.selectbox('Long-Term Care insurance — Person B', ['No','Yes'],
-                             index=0 if values.get('ltc_insurance_person_b','No')=='No' else 1,
-                             key='ltc_insurance_person_b')
+        household_other = currency_input('Household income (e.g., annuities, rental, investment)', 'household_income', 0)
 
-    keep_home = st.checkbox('We will keep the home (include home carrying costs)',
-                            value=values.get('keep_home', False), key='keep_home')
+    # Benefits section
+    with st.expander('Benefits (VA, Long-Term Care insurance)', expanded=False):
+        col1, col2 = st.columns(2 if len(people) > 1 else 1)
+        with col1:
+            a_va = currency_input(f'VA benefit — {nameA}', 'a_va', 0)
+            a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
+                                 index=0 if values.get('a_ltc','No')=='No' else 1, key='a_ltc')
+        if len(people) > 1:
+            with col2:
+                b_va = currency_input(f'VA benefit — {nameB}', 'b_va', 0)
+                b_ltc = st.selectbox(f'Long-Term Care insurance — {nameB}', ['No','Yes'],
+                                     index=0 if values.get('b_ltc','No')=='No' else 1, key='b_ltc')
+        else:
+            b_va = 0
+            b_ltc = 'No'
 
-    home_monthly = 0
-    if keep_home:
-        st.subheader('Home costs (if keeping the home)')
+    # Home decision section
+    with st.expander('Home decision', expanded=False):
+        decision = st.selectbox('What will you do with the home?', ['Keep','Sell','HELOC','Reverse mortgage'], key='home_decision')
+        if decision == 'Keep':
+            st.info('If you keep the home, include carrying costs below.')
+        elif decision == 'Sell':
+            st.info('If you sell the home, enter expected net proceeds under Assets.')
+        elif decision == 'HELOC':
+            st.info('If using a HELOC, include the monthly HELOC payment below and add remaining equity under Assets.')
+        else:
+            st.info('If using a reverse mortgage, include the monthly draw and/or fees as appropriate.')
+
+    # Home carrying costs
+    with st.expander('Home carrying costs', expanded=(values.get('home_decision','Keep')=='Keep')):
         mortgage = currency_input('Mortgage', 'mortgage', 0)
         taxes = currency_input('Property taxes', 'property_taxes', 0)
         ins = currency_input('Home insurance', 'home_insurance', 0)
         hoa = currency_input('HOA', 'hoa', 0)
         utils = currency_input('Utilities', 'utilities', 0)
         maint = currency_input('Maintenance', 'maintenance', 0)
-        heloc = currency_input('HELOC payment', 'heloc_payment_monthly', 0)
+        heloc = currency_input('HELOC payment (if applicable)', 'heloc_payment_monthly', 0)
         home_monthly = mortgage + taxes + ins + hoa + utils + maint + heloc
 
-    st.subheader('Other monthly costs (optional)')
-    medicare = currency_input('Medicare premiums', 'medicare_premiums', 0)
-    dvh = currency_input('Dental/Vision/Hearing', 'dental_vision_hearing', 0)
-    mods = currency_input('Home modifications (monthly)', 'home_modifications_monthly', 0)
-    debts = currency_input('Other debts (monthly)', 'other_debts_monthly', 0)
-    phone = currency_input('Phone/Internet', 'optional_phone_internet', 0)
-    personal = currency_input('Personal care', 'optional_personal_care', 0)
-    travel = currency_input('Family travel', 'optional_family_travel', 0)
-    auto = currency_input('Auto', 'optional_auto', 0)
-    auto_ins = currency_input('Auto insurance', 'optional_auto_insurance', 0)
-    pets = currency_input('Pet care', 'pet_care', 0)
-    other_opt = currency_input('Other (optional)', 'optional_other', 0)
+    # Home modifications
+    with st.expander('Home modifications (if receiving in-home care)', expanded=False):
+        # Decide relevance based on any person recommended in-home
+        any_in_home = any(st.session_state.planner_results[p['id']]['care_type']=='in_home' for p in st.session_state.people)
+        if not any_in_home:
+            st.caption('Modifications are typically most relevant when receiving in-home care.')
+        mods = currency_input('Home modifications (monthlyized estimate)', 'home_modifications_monthly', 0)
 
-    st.subheader('Assets (balances)')
-    other_assets = currency_input('Other liquid assets', 'other_assets', 0)
-    home_equity = currency_input('Home equity', 'home_equity', 0)
+    # Other monthly costs (common)
+    with st.expander('Other monthly costs (common)', expanded=False):
+        medicare = currency_input('Medicare premiums', 'medicare_premiums', 0)
+        dvh = currency_input('Dental/Vision/Hearing', 'dental_vision_hearing', 0)
+        debts = currency_input('Other debts', 'other_debts_monthly', 0)
+        phone = currency_input('Phone/Internet', 'optional_phone_internet', 0)
+        personal = currency_input('Personal care', 'optional_personal_care', 0)
+        travel = currency_input('Family travel', 'optional_family_travel', 0)
+        auto = currency_input('Auto', 'optional_auto', 0)
+        auto_ins = currency_input('Auto insurance', 'optional_auto_insurance', 0)
+        pets = currency_input('Pet care', 'pet_care', 0)
+        other_opt = currency_input('Other (optional)', 'optional_other', 0)
+        optional_costs = home_monthly + medicare + dvh + mods + debts + phone + personal + travel + auto + auto_ins + pets + other_opt
 
+    # Assets
+    with st.expander('Assets', expanded=False):
+        st.caption('Common liquid assets first, then less common items.')
+        other_assets = currency_input('Other liquid assets (cash, savings, investments)', 'other_assets', 0)
+        home_equity = currency_input('Home equity / net proceeds (if selling)', 'home_equity', 0)
+        less_common = currency_input('Less common assets (e.g., annuities surrender value)', 'less_common_assets', 0)
+        total_assets = other_assets + home_equity + less_common
+
+    # Calculations
     _settings = calculator.settings
     _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
     _cap_years = int(_settings.get('display_cap_years_funded', 30))
 
-    monthly_income = a_ss + a_pn + b_ss + b_pn + a_va + b_va
-    if a_ltc == 'Yes': monthly_income += _ltc_add
-    if b_ltc == 'Yes': monthly_income += _ltc_add
-    st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
+    monthly_income_individuals = (a_ss + a_pn + a_other) + (b_ss + b_pn + b_other)
+    monthly_income_benefits = (a_va + ( _ltc_add if a_ltc=='Yes' else 0)) + (b_va + (_ltc_add if b_ltc=='Yes' else 0))
+    monthly_income_household = household_other
+    monthly_income = monthly_income_individuals + monthly_income_benefits + monthly_income_household
 
     combined_cost = st.session_state.get('combined_monthly_cost', 0)
-    optional_costs = home_monthly + medicare + dvh + mods + debts + phone + personal + travel + auto + auto_ins + pets + other_opt
     overall_monthly = combined_cost + optional_costs
 
     st.divider()
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
     with c2:
+        st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
+    with c3:
         gap = max(overall_monthly - monthly_income, 0)
         st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
 
-    total_assets = other_assets + home_equity
     years_funded = float('inf') if gap == 0 else min(_cap_years, round((total_assets / max(gap,1)) / 12, 1))
     st.metric('Years Funded (assets ÷ gap)', '∞' if gap == 0 else f"{years_funded} years")
 
