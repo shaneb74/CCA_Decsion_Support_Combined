@@ -4,7 +4,7 @@ import streamlit as st
 from pathlib import Path
 from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
 
-# Instantiate engines
+# Engines
 planner = PlannerEngine()
 calculator = CalculatorEngine()
 
@@ -16,7 +16,7 @@ if not DATA_DIR.exists():
     st.stop()
 
 def reset_all():
-    for k in ['step','people','answers','planner_results','current_person','combined_monthly_cost','household_values']:
+    for k in ['step','people','answers','planner_results','current_person','combined_monthly_cost','household_values','mobility_raw']:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -79,6 +79,7 @@ elif st.session_state.step == 'audience':
         st.session_state.current_person = 0
         st.session_state.answers = {}
         st.session_state.planner_results = {}
+        st.session_state.mobility_raw = {}  # per-person raw mobility answer index
         st.session_state.step = 'planner'
         st.rerun()
 
@@ -94,7 +95,13 @@ elif st.session_state.step == 'planner':
 
     answers = st.session_state.answers.get(person['id'], {})
     qa = planner.qa
+
+    mobility_q_index = None
     for idx, q in enumerate(qa.get('questions', []), start=1):
+        # Detect the mobility question by name
+        if 'mobility' in q.get('question','').lower():
+            mobility_q_index = idx
+
         val = answers.get(f'q{idx}')
         sel = st.radio(
             q['question'],
@@ -104,6 +111,10 @@ elif st.session_state.step == 'planner':
             key=f"{person['id']}_q{idx}"
         )
         answers[f'q{idx}'] = sel
+
+    # Store raw mobility answer for calculator defaults
+    if mobility_q_index is not None:
+        st.session_state.mobility_raw[person['id']] = answers.get(f"q{mobility_q_index}")
 
     # Conditional
     def infer_flags(ans: dict) -> set:
@@ -181,14 +192,29 @@ elif st.session_state.step == 'calculator':
 
         st.subheader(f"{p['display_name']} — Recommended: {care_type.replace('_',' ').title()}")
 
-        default_care_level = 'High' if ('severe_cognitive_decline' in rec['flags'] or care_type=='memory_care') else 'Medium'
-        default_mobility = 'Assisted' if any(f in rec['flags'] for f in ['high_mobility_dependence','high_safety_concern']) else 'Independent'
-        default_chronic = 'Multiple/Complex' if 'severe_cognitive_decline' in rec['flags'] else 'Some'
+        # Pull explicit mobility defaults from planner Q
+        raw_mob = st.session_state.get('mobility_raw', {}).get(p['id'])
+        # Mapping based on your instruction
+        # 1: best/independent, 2: cane/walker, 3: assistance most movement, 4: mostly immobile/wheelchair
+        mobility_prefill = 'Independent'
+        if raw_mob in (2, 3):
+            mobility_prefill = 'Assisted'
+        if raw_mob == 4:
+            mobility_prefill = 'Non-ambulatory'
 
-        care_level = st.select_slider('Care Level', ['Low','Medium','High'], value=default_care_level, key=f"{p['id']}_care_level")
+        # Care level as dropdown (not slider)
+        default_care_level = 'High' if ('severe_cognitive_decline' in rec['flags'] or care_type=='memory_care') else 'Medium'
+        care_level = st.selectbox('Care Level', ['Low','Medium','High'],
+                                  index=['Low','Medium','High'].index(default_care_level),
+                                  key=f"{p['id']}_care_level")
+
+        # Mobility dropdown with prefill from planner
         mobility = st.selectbox('Mobility', ['Independent','Assisted','Non-ambulatory'],
-                                index=['Independent','Assisted','Non-ambulatory'].index(default_mobility),
+                                index=['Independent','Assisted','Non-ambulatory'].index(mobility_prefill),
                                 key=f"{p['id']}_mobility")
+
+        # Chronic conditions dropdown
+        default_chronic = 'Multiple/Complex' if 'severe_cognitive_decline' in rec['flags'] else 'Some'
         chronic = st.selectbox('Chronic Conditions', ['None','Some','Multiple/Complex'],
                                index=['None','Some','Multiple/Complex'].index(default_chronic),
                                key=f"{p['id']}_chronic")
@@ -199,7 +225,8 @@ elif st.session_state.step == 'calculator':
             room = st.selectbox('Room Type', ['Studio','1 Bedroom','Shared'], key=f"{p['id']}_room")
             inp.room_type = room
         else:
-            hours = st.select_slider('In-home care hours per day', [0,2,4,6,8,12,24], value=6, key=f"{p['id']}_hours")
+            # In-home hours slider 0..24 step 1
+            hours = st.slider('In-home care hours per day', 0, 24, 6, 1, key=f"{p['id']}_hours")
             inp.in_home_hours_per_day = int(hours)
 
         monthly = calculator.monthly_cost(inp)
@@ -231,42 +258,50 @@ elif st.session_state.step == 'household':
     def currency_input(label, key, default=0):
         return st.number_input(label, min_value=0, step=50, value=int(values.get(key, default)), key=key)
 
-    # Income section (per person + household)
+    # Monthly Income (expander)
     with st.expander('Monthly Income', expanded=True):
-        cols = st.columns(2 if len(people) > 1 else 1)
-        with cols[0]:
-            a_ss = currency_input(f'Social Security — {nameA}', 'a_social_security', 0)
-            a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
-            a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
         if len(people) > 1:
-            with cols[1]:
+            colA, colB = st.columns(2)
+            with colA:
+                a_ss = currency_input(f'Social Security — {nameA}', 'a_social_security', 0)
+                a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
+                a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
+            with colB:
                 b_ss = currency_input(f'Social Security — {nameB}', 'b_social_security', 0)
                 b_pn = currency_input(f'Pension — {nameB}', 'b_pension', 0)
                 b_other = currency_input(f'Other income — {nameB}', 'b_other_income', 0)
         else:
+            a_ss = currency_input(f'Social Security — {nameA}', 'a_social_security', 0)
+            a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
+            a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
             b_ss = b_pn = b_other = 0
 
         household_other = currency_input('Household income (e.g., annuities, rental, investment)', 'household_income', 0)
 
-    # Benefits section
+    # Benefits
     with st.expander('Benefits (VA, Long-Term Care insurance)', expanded=False):
-        col1, col2 = st.columns(2 if len(people) > 1 else 1)
-        with col1:
-            a_va = currency_input(f'VA benefit — {nameA}', 'a_va', 0)
-            a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
-                                 index=0 if values.get('a_ltc','No')=='No' else 1, key='a_ltc')
         if len(people) > 1:
+            col1, col2 = st.columns(2)
+            with col1:
+                a_va = currency_input(f'VA benefit — {nameA}', 'a_va', 0)
+                a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
+                                     index=0 if values.get('a_ltc','No')=='No' else 1, key='a_ltc')
             with col2:
                 b_va = currency_input(f'VA benefit — {nameB}', 'b_va', 0)
                 b_ltc = st.selectbox(f'Long-Term Care insurance — {nameB}', ['No','Yes'],
                                      index=0 if values.get('b_ltc','No')=='No' else 1, key='b_ltc')
         else:
+            a_va = currency_input(f'VA benefit — {nameA}', 'a_va', 0)
+            a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
+                                 index=0 if values.get('a_ltc','No')=='No' else 1, key='a_ltc')
             b_va = 0
             b_ltc = 'No'
 
-    # Home decision section
+    # Home decision
     with st.expander('Home decision', expanded=False):
         decision = st.selectbox('What will you do with the home?', ['Keep','Sell','HELOC','Reverse mortgage'], key='home_decision')
+        st.session_state.household_values = st.session_state.get('household_values', {})
+        st.session_state.household_values['home_decision'] = decision
         if decision == 'Keep':
             st.info('If you keep the home, include carrying costs below.')
         elif decision == 'Sell':
@@ -277,7 +312,7 @@ elif st.session_state.step == 'household':
             st.info('If using a reverse mortgage, include the monthly draw and/or fees as appropriate.')
 
     # Home carrying costs
-    with st.expander('Home carrying costs', expanded=(values.get('home_decision','Keep')=='Keep')):
+    with st.expander('Home carrying costs', expanded=(st.session_state.get('household_values', {}).get('home_decision') == 'Keep')):
         mortgage = currency_input('Mortgage', 'mortgage', 0)
         taxes = currency_input('Property taxes', 'property_taxes', 0)
         ins = currency_input('Home insurance', 'home_insurance', 0)
@@ -289,13 +324,12 @@ elif st.session_state.step == 'household':
 
     # Home modifications
     with st.expander('Home modifications (if receiving in-home care)', expanded=False):
-        # Decide relevance based on any person recommended in-home
         any_in_home = any(st.session_state.planner_results[p['id']]['care_type']=='in_home' for p in st.session_state.people)
         if not any_in_home:
             st.caption('Modifications are typically most relevant when receiving in-home care.')
         mods = currency_input('Home modifications (monthlyized estimate)', 'home_modifications_monthly', 0)
 
-    # Other monthly costs (common)
+    # Other monthly costs
     with st.expander('Other monthly costs (common)', expanded=False):
         medicare = currency_input('Medicare premiums', 'medicare_premiums', 0)
         dvh = currency_input('Dental/Vision/Hearing', 'dental_vision_hearing', 0)
