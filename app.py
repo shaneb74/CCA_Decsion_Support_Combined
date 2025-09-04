@@ -18,7 +18,7 @@ def reset_all():
     for k in list(st.session_state.keys()):
         if k.startswith("A_") or k.startswith("B_") or k in (
             'step','people','answers','planner_results','current_person',
-            'combined_monthly_cost','household_values','mobility_raw'
+            'combined_monthly_cost','household_values','mobility_raw','care_overrides'
         ):
             del st.session_state[k]
 
@@ -80,6 +80,7 @@ elif st.session_state.step == 'audience':
         st.session_state.answers = {}
         st.session_state.planner_results = {}
         st.session_state.mobility_raw = {}
+        st.session_state.care_overrides = {}  # per-person override of care type
         st.session_state.step = 'planner'
         st.rerun()
 
@@ -102,18 +103,19 @@ elif st.session_state.step == 'planner':
         if 'mobility' in q.get('question','').lower():
             mobility_q_index = idx
         val = answers.get(f'q{idx}')
-        label = f"{q['question']} (for {name})"
+        label = f\"{q['question']} (for {name})\"
         sel = st.radio(
             label,
             options=[1,2,3,4],
             format_func=lambda n, q=q: q['answers'][str(n)],
             index=(val-1) if val else 0,
-            key=f"{person['id']}_q{idx}"
+            key=f\"{person['id']}_q{idx}\",
+            help=q.get('help')
         )
         answers[f'q{idx}'] = sel
 
     if mobility_q_index is not None:
-        st.session_state.mobility_raw[person['id']] = answers.get(f"q{mobility_q_index}")
+        st.session_state.mobility_raw[person['id']] = answers.get(f\"q{mobility_q_index}\")
 
     # Conditional
     def infer_flags(ans: dict) -> set:
@@ -134,7 +136,8 @@ elif st.session_state.step == 'planner':
         st.warning('It looks like 24/7 supervision may be needed.')
         conditional_answer = st.radio(cq['question'], options=[1,2],
                                       format_func=lambda n: cq['answers'][str(n)],
-                                      key=f"{person['id']}_q9")
+                                      key=f\"{person['id']}_q9\",
+                                      help=cq.get('help'))
 
     st.session_state.answers[person['id']] = answers
 
@@ -166,15 +169,31 @@ elif st.session_state.step == 'planner':
 # ---------- Recommendations ----------
 elif st.session_state.step == 'recommendations':
     st.header('Our Recommendation')
+    st.caption('You can proceed with the recommended option, or explore another scenario without redoing questions.')
+
     for p in st.session_state.people:
         rec = st.session_state.planner_results[p['id']]
-        st.subheader(f"{p['display_name']}: {rec['care_type'].replace('_',' ').title()}")
+        default = rec['care_type']
+        st.subheader(f\"{p['display_name']}: {default.replace('_',' ').title()} (recommended)\" )
         for r in rec.get('reasons', []):
             st.write('• ' + r)
-        st.success('This is a starting point. You’ll be able to adjust details next.')
+        if rec.get('advisory'):
+            st.info(rec['advisory'])
+
+        # Scenario override selector
+        care_choices = ['in_home','assisted_living','memory_care']
+        pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
+        choice = st.selectbox(f\"Care scenario for {p['display_name']}\",
+                              [pretty[c] for c in care_choices],
+                              index=care_choices.index(default),
+                              key=f\"override_{p['id']}\",
+                              help='Start with the recommendation, or choose a different scenario to compare.')
+        # Save override as raw key
+        rev = {v:k for k,v in pretty.items()}
+        st.session_state.care_overrides[p['id']] = rev[choice]
+
         st.divider()
 
-    st.markdown('Next, we’ll walk through costs step by step.')
     if st.button('See Costs'):
         st.session_state.step = 'calculator'
         st.rerun()
@@ -182,15 +201,33 @@ elif st.session_state.step == 'recommendations':
 # ---------- Calculator ----------
 elif st.session_state.step == 'calculator':
     st.header('Cost Planner')
-    state = st.selectbox('Location', ['National','Washington','California','Texas','Florida'])
+    state = st.selectbox('Location', ['National','Washington','California','Texas','Florida'],
+                         help='State averages adjust typical market rates.')
 
     total = 0
     for p in st.session_state.people:
         rec = st.session_state.planner_results[p['id']]
-        care_type = rec['care_type']
         pid = p['id']
+        # Use override if set
+        care_type = st.session_state.get('care_overrides', {}).get(pid, rec['care_type'])
 
-        st.subheader(f"{p['display_name']} — Recommended: {care_type.replace('_',' ').title()}")
+        st.subheader(f\"{p['display_name']} — Scenario: {care_type.replace('_',' ').title()} (recommendation: {rec['care_type'].replace('_',' ').title()})\")
+
+        # Allow switching scenario here too
+        care_choices = ['in_home','assisted_living','memory_care']
+        pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
+        scenario_label = st.selectbox(f\"Care scenario for {p['display_name']} (adjust here if needed)\",
+                                      [pretty[c] for c in care_choices],
+                                      index=care_choices.index(care_type),
+                                      key=f\"calc_override_{pid}\",
+                                      help='Change the scenario without redoing questions.')
+        care_type_new = {v:k for k,v in pretty.items()}[scenario_label]
+        if care_type_new != care_type:
+            # Update override and clear stale widget keys tied to prior scenario
+            st.session_state.care_overrides[pid] = care_type_new
+            for k in [f\"{pid}_room\", f\"{pid}_hours\"]:
+                if k in st.session_state: del st.session_state[k]
+            care_type = care_type_new
 
         # Map planner mobility to default
         raw_mob = st.session_state.get('mobility_raw', {}).get(pid)
@@ -203,7 +240,8 @@ elif st.session_state.step == 'calculator':
         care_level = st.selectbox('Care Level (staffing intensity)',
                                   ['Low','Medium','High'],
                                   index=['Low','Medium','High'].index(default_care_level),
-                                  key=f"{pid}_care_level")
+                                  key=f\"{pid}_care_level\",
+                                  help='Higher care levels reflect more hands-on support and supervision.')
 
         # Mobility dropdown with parenthetical
         mobility_options = ['Independent (no device)',
@@ -219,7 +257,8 @@ elif st.session_state.step == 'calculator':
                          'Non-ambulatory':'Non-ambulatory (wheelchair/bedbound)'}[mobility_prefill]
         mobility_label = st.selectbox('Mobility', mobility_options,
                                       index=mobility_options.index(prefill_label),
-                                      key=f"{pid}_mobility")
+                                      key=f\"{pid}_mobility\",
+                                      help='Mobility affects staffing and environmental needs.')
         mobility = mobility_map_out[mobility_label]
 
         # Chronic conditions with context
@@ -234,32 +273,34 @@ elif st.session_state.step == 'calculator':
         default_chronic_label = chronic_options[2] if 'severe_cognitive_decline' in rec['flags'] else chronic_options[1]
         chronic_label = st.selectbox('Chronic Conditions', chronic_options,
                                      index=chronic_options.index(default_chronic_label),
-                                     key=f"{pid}_chronic")
+                                     key=f\"{pid}_chronic\",
+                                     help='Select the best description of ongoing medical conditions.')
         chronic = chronic_map_out[chronic_label]
 
         inp = CalcInputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
 
-        # Clear stale widget state when switching between facility vs in-home
+        # Room vs hours, with help text and state clearing
         if care_type in ['assisted_living','memory_care']:
-            # Remove in-home hours if it exists
-            hrs_key = f"{pid}_hours"
-            if hrs_key in st.session_state: del st.session_state[hrs_key]
-            room = st.selectbox('Room Type', ['Studio','1 Bedroom','Shared'], key=f"{pid}_room")
+            if f\"{pid}_hours\" in st.session_state: del st.session_state[f\"{pid}_hours\"]
+            room = st.selectbox('Room Type', ['Studio','1 Bedroom','Shared'],
+                                key=f\"{pid}_room\",
+                                help='Typical base rates vary by room size and privacy.')
             inp.room_type = room
         else:
-            room_key = f"{pid}_room"
-            if room_key in st.session_state: del st.session_state[room_key]
-            hours = st.slider('In-home care hours per day', 0, 24, 6, 1, key=f"{pid}_hours")
+            if f\"{pid}_room\" in st.session_state: del st.session_state[f\"{pid}_room\"]
+            hours = st.slider('In-home care hours per day', 0, 24, 6, 1,
+                              key=f\"{pid}_hours\",
+                              help='Total paid caregiver hours per day.')
             inp.in_home_hours_per_day = int(hours)
 
         monthly = calculator.monthly_cost(inp)
-        st.metric('Estimated Monthly Cost', f"${monthly:,.0f}")
+        st.metric('Estimated Monthly Cost', f\"${monthly:,.0f}\")
         total += monthly
         st.divider()
 
     st.subheader('Combined Total')
     st.session_state.combined_monthly_cost = total
-    st.metric('Estimated Combined Monthly Cost', f"${total:,.0f}")
+    st.metric('Estimated Combined Monthly Cost', f\"${total:,.0f}\")
     st.info('These are planning estimates. Adjust settings to explore scenarios.')
 
     if st.button('Add Household & Assets (optional)'):
@@ -301,7 +342,7 @@ elif st.session_state.step == 'household':
 
         household_other = currency_input('Household income (e.g., annuities, rental, investment)', 'household_income', 0)
 
-    # Benefits
+    # Benefits (VA, LTC)
     with st.expander('Benefits (VA, Long-Term Care insurance)', expanded=False):
         if len(people) > 1:
             col1, col2 = st.columns(2)
@@ -320,12 +361,12 @@ elif st.session_state.step == 'household':
             b_va = 0
             b_ltc = 'No'
 
-    # Home decision (single drawer with dynamic subsections)
+    # Home decision
     with st.expander('Home decision', expanded=False):
         decision = st.selectbox('What will you do with the home?', ['Keep','Sell','HELOC','Reverse mortgage'],
                                 index=['Keep','Sell','HELOC','Reverse mortgage'].index(values.get('home_decision','Keep')),
-                                key='home_decision')
-        st.caption('Choose an option to see the relevant inputs.')
+                                key='home_decision',
+                                help='Pick one option; related fields will appear below.')
 
         # Defaults
         home_monthly = 0
@@ -347,10 +388,11 @@ elif st.session_state.step == 'household':
             st.info('We’ll estimate net proceeds to add to assets.')
             value = currency_input('Estimated sale price', 'home_value_estimate', 0)
             payoff = currency_input('Mortgage payoff (principal remaining)', 'home_payoff', 0)
-            fee_pct_label = st.select_slider('Estimated selling fees (%)', options=list(range(5,11)), value=7, key='selling_fee_pct')
+            fee_pct_label = st.select_slider('Estimated selling fees (%)', options=list(range(5,11)), value=7, key='selling_fee_pct',
+                                             help='Typical combined agent and closing costs range 6–8% in many markets.')
             fee_pct = fee_pct_label / 100.0
             auto_net_proceeds = max(int(value - payoff - value*fee_pct), 0)
-            st.metric('Estimated net proceeds to assets', f"${auto_net_proceeds:,.0f}")
+            st.metric('Estimated net proceeds to assets', f\"${auto_net_proceeds:,.0f}\")
 
         elif decision == 'HELOC':
             st.info('Enter the monthly HELOC payment and the remaining available equity.')
@@ -363,7 +405,7 @@ elif st.session_state.step == 'household':
             st.info('Enter the expected monthly draw and any upfront fees.')
             reverse_draw = currency_input('Monthly reverse mortgage draw (adds to income)', 'reverse_monthly_draw', 0)
             reverse_fees = currency_input('Upfront fees (reduce equity)', 'reverse_fees_upfront', 0)
-            auto_net_proceeds = max(-reverse_fees, 0)  # if fees only, this is 0
+            auto_net_proceeds = 0  # no automatic equity addition here
 
     # Home modifications
     with st.expander('Home modifications (if receiving in-home care)', expanded=False):
@@ -390,15 +432,10 @@ elif st.session_state.step == 'household':
         st.caption('Common liquid assets first, then less common items.')
         other_assets = currency_input('Other liquid assets (cash, savings, investments)', 'other_assets', 0)
         less_common = currency_input('Less common assets (e.g., annuities surrender value)', 'less_common_assets', 0)
-        # Add any auto net proceeds from Home decision
-        auto_note = ""
-        if 'home_decision' in st.session_state and st.session_state['home_decision'] in ('Sell','HELOC'):
-            auto_note = " (includes home decision amount above)"
-        auto_add = auto_net_proceeds if 'auto_net_proceeds' in locals() else 0
-        st.write(f"Auto-added from Home decision: ${auto_add:,.0f}")
-        total_assets = other_assets + less_common + auto_add
+        st.write(f\"Auto-added from Home decision: ${auto_net_proceeds:,.0f}\")
+        total_assets = other_assets + less_common + auto_net_proceeds
 
-    # Calculator settings for LTC add and cap
+    # Settings
     _settings = calculator.settings
     _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
     _cap_years = int(_settings.get('display_cap_years_funded', 30))
@@ -417,15 +454,15 @@ elif st.session_state.step == 'household':
     st.divider()
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
+        st.metric('Monthly Care + Selected Costs', f\"${overall_monthly:,.0f}\")
     with c2:
-        st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
+        st.metric('Total Monthly Income', f\"${monthly_income:,.0f}\")
     with c3:
         gap = max(overall_monthly - monthly_income, 0)
-        st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
+        st.metric('Estimated Monthly Gap', f\"${gap:,.0f}\")
 
     years_funded = float('inf') if gap == 0 else min(_cap_years, round((total_assets / max(gap,1)) / 12, 1))
-    st.metric('Years Funded (assets ÷ gap)', '∞' if gap == 0 else f"{years_funded} years")
+    st.metric('Years Funded (assets ÷ gap)', '∞' if gap == 0 else f\"{years_funded} years\")
 
     cols = st.columns(2)
     with cols[0]:
