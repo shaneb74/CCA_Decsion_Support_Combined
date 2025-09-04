@@ -1,6 +1,7 @@
 
 import streamlit as st
 from pathlib import Path
+import matplotlib.pyplot as plt
 from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
 
 planner = PlannerEngine()
@@ -19,7 +20,7 @@ def reset_all():
         if k.startswith("A_") or k.startswith("B_") or k in (
             'step','people','answers','planner_results','current_person',
             'combined_monthly_cost','household_values','mobility_raw','care_overrides',
-            'va_cache','care_partner_add','home_mods'
+            'va_cache','care_partner_add','home_mods','summary_cache'
         ):
             del st.session_state[k]
 
@@ -29,7 +30,7 @@ def get_home_mod_catalog():
     catalog = s.get('home_modifications_catalog')
     if isinstance(catalog, list) and catalog:
         return catalog
-    # Fallback catalog with avg cost and typical range multipliers baked in
+    # Fallback catalog
     return [
         {'key':'ramp', 'label':'Exterior ramp (installed)', 'avg':3500},
         {'key':'widen_doors', 'label':'Widen doorways (per doorway)', 'avg':900},
@@ -108,7 +109,7 @@ elif st.session_state.step == 'audience':
         st.session_state.planner_results = {}
         st.session_state.mobility_raw = {}
         st.session_state.care_overrides = {}
-        st.session_state.step = 'care_partner_context'  # interstitial before planner
+        st.session_state.step = 'care_partner_context'
         st.rerun()
 
 # ---------- Care Partner Interstitial ----------
@@ -341,7 +342,6 @@ elif st.session_state.step == 'calculator':
             days = st.slider('Days of care per month', 0, 31, 20, 1,
                              key=f"{pid}_days",
                              help='How many days per month caregivers are scheduled.')
-            # Normalize days so engines that only read hours/day still reflect days effect
             effective_hours_per_day = int(round((hours * max(days, 0)) / 30.0)) if days is not None else int(hours)
             try:
                 inp.in_home_hours_per_day = int(effective_hours_per_day)
@@ -350,7 +350,6 @@ elif st.session_state.step == 'calculator':
                     setattr(inp, 'in_home_hours_per_day', int(effective_hours_per_day))
                 except Exception:
                     pass
-            # Also pass days if engine supports it
             try:
                 setattr(inp, 'in_home_days_per_month', int(days))
             except Exception:
@@ -385,7 +384,10 @@ elif st.session_state.step == 'household':
     values = st.session_state.get('household_values', {})
 
     def currency_input(label, key, default=0):
-        return st.number_input(label, min_value=0, step=50, value=int(values.get(key, default)), key=key)
+        val = int(values.get(key, default))
+        v = st.number_input(label, min_value=0, step=50, value=val, key=key)
+        st.session_state[key] = v
+        return v
 
     # Individual Monthly Income
     with st.expander('Monthly Income — Individual', expanded=True):
@@ -404,7 +406,6 @@ elif st.session_state.step == 'household':
             a_pn = currency_input(f'Pension — {nameA}', 'a_pension', 0)
             a_other = currency_input(f'Other income — {nameA}', 'a_other_income', 0)
             b_ss = b_pn = b_other = 0
-        # Subtotal
         ind_total = (a_ss + a_pn + a_other) + (b_ss + b_pn + b_other)
         st.metric('Subtotal — Individual monthly income', f"${ind_total:,.0f}")
 
@@ -419,9 +420,84 @@ elif st.session_state.step == 'household':
         household_other = hh_rent + hh_annuity + hh_invest + hh_trust + hh_other
         st.metric('Subtotal — Household monthly income', f"${household_other:,.0f}")
 
-    # Benefits (keep VA/LTC aligned and subtotaled) — omitted here for brevity in this snippet
+    # Benefits: VA + LTC (aligned)
     with st.expander('Benefits (VA, Long-Term Care insurance)', expanded=True):
-        st.info('Use the latest VA/LTC block from the previous working file. This placeholder keeps section order consistent.')
+        st.markdown('**VA benefits**')
+        settings = calculator.settings
+        va_mapr = settings.get('va_mapr_2025', {
+            'Veteran (no dependents) — A&A': 2358,
+            'Veteran + 1 dependent — A&A': 2795,
+            'Two veterans married, one A&A': 2795,
+            'Surviving spouse — A&A': 1515,
+            'Surviving spouse + 1 child — A&A': 1808
+        })
+
+        def va_block(tag_prefix, person_name):
+            st.write(f'**{person_name}**')
+            va_path = st.radio(
+                f'Choose an option for {person_name}:',
+                ['Not a veteran / No VA pension',
+                 'I already receive or qualify for VA pension/Aid & Attendance',
+                 'I served, but I’m not sure if I qualify'],
+                index=0,
+                key=f'{tag_prefix}_va_path'
+            )
+            result = {'monthly': 0, 'detail': 'No VA pension'}
+            if va_path.startswith('I already receive'):
+                tier = st.selectbox(
+                    'Select status',
+                    list(va_mapr.keys()),
+                    key=f'{tag_prefix}_va_tier',
+                    help='Monthly caps converted from VA MAPR. Actual payment equals MAPR minus your income for VA purposes.'
+                )
+                max_monthly = int(va_mapr[tier])
+                st.caption(f'Estimated monthly cap for this tier: ${max_monthly:,}.')
+                result['monthly'] = st.number_input('Monthly VA payment (enter actual if known; otherwise use cap)',
+                                                    min_value=0, step=25, value=max_monthly, key=f'{tag_prefix}_va_actual')
+                result['detail'] = tier
+            elif va_path.startswith('I served'):
+                st.info('Quick check (not exhaustive):')
+                wartime = st.checkbox('Served during a wartime period', key=f'{tag_prefix}_wartime')
+                age_or_dis = st.checkbox('65+ or permanently and totally disabled', key=f'{tag_prefix}_age_dis')
+                discharge = st.checkbox('Discharge not dishonorable', key=f'{tag_prefix}_discharge')
+                need_aa = st.checkbox('Needs help with daily activities or housebound', key=f'{tag_prefix}_need_aa')
+                below_networth = st.checkbox('Net worth under VA limit', key=f'{tag_prefix}_networth')
+                likely = wartime and age_or_dis and discharge and below_networth
+                if likely:
+                    st.success('You may qualify for VA pension; Aid & Attendance may apply if daily help/housebound.')
+                    result['detail'] = 'Wizard: likely eligible'
+                else:
+                    st.warning('Based on these answers, VA pension may not apply. You can still check with a VSO.')
+                    result['detail'] = 'Wizard: uncertain'
+            return result
+
+        col1, col2 = st.columns(2)
+        with col1:
+            a_res = va_block('a', nameA)
+        with col2:
+            if len(st.session_state.people) > 1:
+                b_res = va_block('b', nameB)
+            else:
+                b_res = {'monthly': 0, 'detail': 'No VA pension'}
+
+        ltc1, ltc2 = st.columns(2)
+        with ltc1:
+            a_ltc = st.selectbox(f'Long-Term Care insurance — {nameA}', ['No','Yes'],
+                                 index=0 if st.session_state.get('household_values', {}).get('a_ltc','No')=='No' else 1,
+                                 key='a_ltc')
+        with ltc2:
+            b_ltc = st.selectbox(f'Long-Term Care insurance — {nameB}', ['No','Yes'],
+                                 index=0 if st.session_state.get('household_values', {}).get('b_ltc','No')=='No' else 1,
+                                 key='b_ltc')
+
+        _settings = calculator.settings
+        _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
+
+        a_va = int(a_res['monthly']); st.session_state['a_va_monthly'] = a_va
+        b_va = int(b_res['monthly']); st.session_state['b_va_monthly'] = b_va
+
+        benefits_total = (a_va + (_ltc_add if a_ltc=='Yes' else 0)) + (b_va + (_ltc_add if b_ltc=='Yes' else 0))
+        st.metric('Subtotal — Benefits (VA + LTC add-ons)', f"${benefits_total:,.0f}")
 
     # Home decision
     with st.expander('Home decision', expanded=False):
@@ -471,13 +547,12 @@ elif st.session_state.step == 'household':
             reverse_fees = currency_input('Upfront fees (reduce equity)', 'reverse_fees_upfront', 0)
             st.metric('Subtotal — Reverse monthly draw', f"${reverse_draw:,.0f}")
 
-    # NEW: Home modifications (project list with scaling + amortization)
+    # Home modifications
     with st.expander('Home modifications (if receiving in-home care)', expanded=False):
         any_in_home = any(st.session_state.planner_results[p['id']]['care_type']=='in_home' for p in st.session_state.people)
         if not any_in_home:
             st.caption('Modifications are typically most relevant when receiving in-home care. You can still record them here.')
 
-        # Global controls for the section
         colg1, colg2, colg3 = st.columns([1,1,1])
         with colg1:
             level = st.selectbox('Solution level', ['Budget','Standard','Custom'], index=1, help='Scales project costs.')
@@ -487,7 +562,6 @@ elif st.session_state.step == 'household':
         with colg3:
             show_adv = st.checkbox('Show quantities', value=False)
 
-        # Multipliers
         mult = {'Budget':0.8, 'Standard':1.0, 'Custom':1.5}[level]
 
         catalog = get_home_mod_catalog()
@@ -496,21 +570,20 @@ elif st.session_state.step == 'household':
 
         total_capex = 0
         for item in catalog:
-            state = st.session_state.home_mods[item['key']]
+            state_item = st.session_state.home_mods[item['key']]
             cols = st.columns([0.06, 0.62, 0.32])
             with cols[0]:
-                sel = st.checkbox('', value=state['selected'], key=f"hm_sel_{item['key']}")
+                sel = st.checkbox('', value=state_item['selected'], key=f"hm_sel_{item['key']}")
             with cols[1]:
                 st.write(f"**{item['label']}**  · avg ${item['avg']:,}")
                 if show_adv:
-                    qty = st.number_input('Qty', min_value=1, max_value=20, value=state['qty'], key=f"hm_qty_{item['key']}")
+                    qty = st.number_input('Qty', min_value=1, max_value=20, value=state_item['qty'], key=f"hm_qty_{item['key']}")
                 else:
                     qty = 1
             with cols[2]:
-                est = int(round(item['avg'] * mult * (state['qty'] if show_adv else 1)))
+                est = int(round(item['avg'] * mult * (state_item['qty'] if show_adv else 1)))
                 st.write(f"Est. cost: **${est:,}**")
 
-            # update capex if selected
             st.session_state.home_mods[item['key']]['selected'] = sel
             st.session_state.home_mods[item['key']]['qty'] = qty
             if sel:
@@ -519,6 +592,7 @@ elif st.session_state.step == 'household':
         monthly_mod_cost = monthlyize_capex(total_capex, amort_months)
         st.metric('Subtotal — Modifications monthly estimate', f"${monthly_mod_cost:,.0f}")
         st.caption(f"Projects total: ${total_capex:,} · spread over {amort_months} months at {int(mult*100)}% of averages.")
+        st.session_state['home_mods_monthly'] = monthly_mod_cost
 
     # Other monthly costs
     with st.expander('Other monthly costs (common)', expanded=False):
@@ -567,35 +641,42 @@ elif st.session_state.step == 'household':
     _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
     _cap_years = int(_settings.get('display_cap_years_funded', 30))
 
-    # Income math (note: include modifications monthly estimate if defined)
-    # Recompute benefits quick since we left placeholder earlier
-    a_va = int(st.session_state.get('a_va_monthly', 0)) if 'a_va_monthly' in st.session_state else 0
-    b_va = int(st.session_state.get('b_va_monthly', 0)) if 'b_va_monthly' in st.session_state else 0
-    a_ltc = st.session_state.get('a_ltc','No')
-    b_ltc = st.session_state.get('b_ltc','No')
+    # Income math
     monthly_income_individuals = (a_ss + a_pn + a_other) + (b_ss + b_pn + b_other)
-    monthly_income_benefits = (a_va + (_ltc_add if a_ltc=='Yes' else 0)) + (b_va + (_ltc_add if b_ltc=='Yes' else 0))
-    household_other = st.session_state.get('hh_rental_income',0) + st.session_state.get('hh_annuity_income',0) + st.session_state.get('hh_investment_income',0) + st.session_state.get('hh_trust_income',0) + st.session_state.get('hh_other_income',0)
-    reverse_draw = st.session_state.get('reverse_monthly_draw', 0)
-    monthly_income = monthly_income_individuals + monthly_income_benefits + household_other + reverse_draw
+    monthly_income_benefits = (st.session_state.get('a_va_monthly',0) + (_ltc_add if st.session_state.get('a_ltc','No')=='Yes' else 0)) + \
+                              (st.session_state.get('b_va_monthly',0) + (_ltc_add if st.session_state.get('b_ltc','No')=='Yes' else 0))
+    monthly_income_household = household_other + st.session_state.get('reverse_monthly_draw', 0)
+    monthly_income = monthly_income_individuals + monthly_income_benefits + monthly_income_household
 
     combined_cost = st.session_state.get('combined_monthly_cost', 0)
+    home_monthly_local = locals().get('home_monthly', 0)
     mods_monthly = st.session_state.get('home_mods_monthly', 0)
-    optional_costs = (home_monthly if 'home_monthly' in locals() else 0) + (globals().get('monthly_mod_cost', 0)) + medicare + dvh + debts + phone + personal + travel + auto + auto_ins + pets + other_opt
+    optional_costs = home_monthly_local + mods_monthly + other_total
     overall_monthly = combined_cost + optional_costs
 
     st.divider()
     c1, c2, c3 = st.columns(3)
     with c1:
         st.metric('Monthly Care + Selected Costs', f"${overall_monthly:,.0f}")
+        st.metric('Years Funded (assets ÷ gap)', '∞' if max(overall_monthly - monthly_income,0) == 0 else f"{min(_cap_years, round((total_assets / max(overall_monthly - monthly_income,1)) / 12, 1))} years")
     with c2:
         st.metric('Total Monthly Income', f"${monthly_income:,.0f}")
     with c3:
         gap = max(overall_monthly - monthly_income, 0)
         st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
 
-    years_funded = float('inf') if gap == 0 else min(_cap_years, round((total_assets / max(gap,1)) / 12, 1))
-    st.metric('Years Funded (assets ÷ gap)', '∞' if gap == 0 else f"{years_funded} years")
+    # Store a summary cache for the details page
+    st.session_state.summary_cache = {
+        'per_person_costs': {p['display_name']: st.session_state.get('va_cache', {}).get(p['id'],{}).get('care_cost',0) for p in st.session_state.people},
+        'household_assets_total': total_assets,
+        'income_individuals': monthly_income_individuals,
+        'income_benefits': monthly_income_benefits,
+        'income_household': monthly_income_household,
+        'costs_home': home_monthly_local,
+        'costs_mods': mods_monthly,
+        'costs_other': other_total,
+        'combined_care_costs': st.session_state.get('combined_monthly_cost',0)
+    }
 
     cols = st.columns(2)
     with cols[0]:
@@ -603,4 +684,59 @@ elif st.session_state.step == 'household':
             st.session_state.step = 'calculator'
             st.rerun()
     with cols[1]:
-        st.success('Adjust any values above to explore different scenarios.')
+        if st.button('View detailed breakdown'):
+            st.session_state.step = 'details'
+            st.rerun()
+
+# ---------- Details (donut charts) ----------
+elif st.session_state.step == 'details':
+    st.header('Detailed breakdown')
+    s = st.session_state.get('summary_cache', {})
+
+    # Per-person care costs text table
+    st.subheader('Care costs by person (monthly)')
+    for name, cost in s.get('per_person_costs', {}).items():
+        st.write(f"• **{name}**: ${int(cost):,}")
+
+    # Donut 1: Costs
+    st.subheader('Costs (monthly)')
+    cost_labels = ['Care (combined)', 'Home carrying', 'Home mods amortized', 'Other monthly']
+    cost_values = [
+        s.get('combined_care_costs',0),
+        s.get('costs_home',0),
+        s.get('costs_mods',0),
+        s.get('costs_other',0)
+    ]
+    fig1, ax1 = plt.subplots()
+    ax1.pie(cost_values, labels=cost_labels, wedgeprops=dict(width=0.4))
+    ax1.set(aspect="equal")
+    st.pyplot(fig1)
+
+    # Donut 2: Income (monthly)
+    st.subheader('Income (monthly)')
+    inc_labels = ['Individual income', 'Benefits (VA + LTC add-ons)', 'Household income']
+    inc_values = [s.get('income_individuals',0), s.get('income_benefits',0), s.get('income_household',0)]
+    fig2, ax2 = plt.subplots()
+    ax2.pie(inc_values, labels=inc_labels, wedgeprops=dict(width=0.4))
+    ax2.set(aspect="equal")
+    st.pyplot(fig2)
+
+    # Donut 3: Assets (one-time totals)
+    st.subheader('Assets (totals)')
+    assets_total = s.get('household_assets_total',0)
+    fig3, ax3 = plt.subplots()
+    ax3.pie([assets_total], labels=[f'Household assets (${int(assets_total):,})'], wedgeprops=dict(width=0.4))
+    ax3.set(aspect="equal")
+    st.pyplot(fig3)
+
+    st.caption('Charts are planning visuals. Adjust values in Household & Budget to update these numbers.')
+
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button('Back to summary'):
+            st.session_state.step = 'household'
+            st.rerun()
+    with cols[1]:
+        if st.button('Back to start'):
+            reset_all()
+            st.rerun()
