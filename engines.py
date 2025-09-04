@@ -1,179 +1,189 @@
-from __future__ import annotations
+# engines.py — baseline engines with robust thresholds and a simple calculator
+# Loads your JSONs, scores, and outputs care_type. Calculator provides a stable estimate().
+# If your repo already has richer methods like monthly_cost(), app.py will call that instead.
+
 import json
 import re
-from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Tuple
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Dict, Any
 
-# Resolve paths relative to this file so it works locally and on Streamlit Cloud
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = (BASE_DIR / "data") if (BASE_DIR / "data").exists() else (BASE_DIR.parent / "data")
-
-def _load_json(rel_name: str):
-    p = DATA_DIR / rel_name
-    if not p.exists():
-        raise FileNotFoundError(f"Required data file not found: {p}")
-    with p.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-def _to_int_threshold(val, default_value: int) -> int:
-    """Accept int/float/str; if str, extract first integer; else default."""
-    if isinstance(val, (int, float)):
-        return int(val)
+# ---------- helpers ----------
+def _to_int_threshold(val, default):
+    """Accept int or descriptive string like 'Recommend if >= 6' and return the integer."""
+    if isinstance(val, int):
+        return val
     if isinstance(val, str):
-        m = re.search(r"(\d+)", val)
+        m = re.search(r"\d+", val)
         if m:
-            return int(m.group(1))
-    return default_value
+            return int(m.group(0))
+    return default
 
-CareType = Literal['memory_care','assisted_living','in_home']
-
+# ---------- planner ----------
 @dataclass
 class PlannerResult:
-    care_type: CareType
-    flags: List[str]
+    care_type: str
     scores: Dict[str, int]
-    reasons: List[str]
-    advisory: Optional[str] = None
+    flags: set
+    reasons: list
+    advisory: str | None = None
 
 class PlannerEngine:
-    """Deterministic planner that reads Q/A and recommendation configs from data/."""
-    def __init__(self,
-                 qa_path: str = "question_answer_logic_FINAL_UPDATED.json",
-                 rec_path: str = "recommendation_logic_FINAL_MASTER_UPDATED.json"):
-        self.qa = _load_json(qa_path)
-        self.rec = _load_json(rec_path)
-        self.scoring = self.rec.get('scoring', {})
-        self.dependence_logic = set(self.rec.get('dependence_flag_logic', {}).get('trigger_if_flags', []))
-        self.final_thresholds = self.rec.get('final_decision_thresholds', {})
-        self.final_texts = self.rec.get('final_recommendation', {})
+    def __init__(self, qa_path: str, rec_path: str):
+        qa_p = Path(qa_path)
+        rec_p = Path(rec_path)
+        if not qa_p.exists() or not rec_p.exists():
+            raise FileNotFoundError("QA or Recommendation JSON path missing.")
+        with open(qa_p, "r") as f:
+            self.qa = json.load(f)
+        with open(rec_p, "r") as f:
+            self.rec = json.load(f)
+        self.final_thresholds = self.rec.get("final_thresholds", {})
 
-    def run(self, answers: Dict[str, int], conditional_answer: Optional[int] = None) -> PlannerResult:
-        flags = self._flags_from_answers(answers)
-
-        # Conditional: severe cognitive decline + cannot arrange 24/7
-        if 'severe_cognitive_decline' in flags and conditional_answer == 2:
-            flags.add('memory_care_required')
-
-        # Overrides
-        if 'memory_care_required' in flags:
-            msg = self.final_texts.get('memory_care_required_override', {}).get('message', 'Memory Care required.')
-            return PlannerResult('memory_care', list(flags), {'in_home':0,'assisted_living':0}, [msg])
-
-        if 'severe_cognitive_decline' in flags and conditional_answer != 1:
-            msg = self.final_texts.get('memory_care_override', {}).get('message', 'Memory Care recommended.')
-            return PlannerResult('memory_care', list(flags), {'in_home':0,'assisted_living':0}, [msg])
-
-        # Scores
-        in_home, assisted = self._score(flags)
-        scores = {'in_home': in_home, 'assisted_living': assisted}
-
-        # Thresholds (robust to descriptive strings)
-        assisted_cut = _to_int_threshold(self.final_thresholds.get('assisted_living'), 6)
-        in_home_cut  = _to_int_threshold(self.final_thresholds.get('in_home'), 6)
-
-        if assisted >= assisted_cut:
-            msg = self.final_texts.get('assisted_living_recommendation', {}).get('message', 'Assisted Living is recommended.')
-            return PlannerResult('assisted_living', list(flags), scores, [msg])
-
-        if in_home >= in_home_cut and assisted < assisted_cut:
-            msg = self.final_texts.get('in_home_with_support', {}).get('message', 'In-Home Care with support is recommended.')
-            return PlannerResult('in_home', list(flags), scores, [msg])
-
-        # Fallback
-        advisory = self.final_texts.get('balanced_recommendation', {}).get('message',
-                    'Both options could work; consider support at home vs a community setting.')
-        care = 'assisted_living' if assisted >= in_home else 'in_home'
-        return PlannerResult(care, list(flags), scores, [advisory], advisory=advisory)
-
-    def _flags_from_answers(self, answers: Dict[str, int]) -> set:
+    def _score(self, answers: Dict[str, int], conditional_answer: str | None):
+        scores = {"in_home": 0, "assisted_living": 0, "memory_care": 0}
         flags = set()
-        for idx, q in enumerate(self.qa.get('questions', []), start=1):
-            ans = answers.get(f'q{idx}')
-            if ans is None:
-                continue
-            for _, rules in q.get('trigger', {}).items():
-                for rule in rules:
-                    if rule.get('answer') == ans:
-                        flags.add(rule.get('flag'))
-        return flags
 
-    def _score(self, flags: set) -> Tuple[int,int]:
-        # Map flags to scoring domains
-        domain_for_flag = {
-            'moderate_dependence':'care_burden','high_dependence':'care_burden',
-            'moderate_mobility':'care_burden','high_mobility_dependence':'care_burden',
-            'moderate_risk':'social_isolation','high_risk':'social_isolation',
-            'limited_support':'caregiver_support','no_support':'caregiver_support',
-            'moderate_cognitive_decline':'cognitive_function','severe_cognitive_decline':'cognitive_function',
-            'moderate_safety_concern':'home_safety','high_safety_concern':'home_safety',
-            'low_access':'geographic_access','very_low_access':'geographic_access',
-            'can_afford_assisted_living':'financial_feasibility','can_afford_in_home':'financial_feasibility',
-            'needs_financial_assistance':'financial_feasibility',
+        for q in self.qa.get("questions", []):
+            qid = q.get("id")
+            key = f"q{qid}"
+            ans = answers.get(key)
+            # accumulate scores if provided in QA JSON
+            if ans is not None:
+                s_map = q.get("scores", {})
+                s_for_ans = s_map.get(str(ans)) or s_map.get(int(ans)) if isinstance(ans, int) else {}
+                if s_for_ans:
+                    for care, val in s_for_ans.items():
+                        scores[care] = scores.get(care, 0) + int(val)
+                # evaluate triggers for flags if present
+                trig = q.get("trigger", {})
+                for _, rule_list in trig.items():
+                    for rule in rule_list:
+                        if str(rule.get("answer")) == str(ans):
+                            fl = rule.get("flag")
+                            if fl:
+                                flags.add(fl)
+
+        if conditional_answer:
+            cq_arr = self.qa.get("conditional_questions") or []
+            if cq_arr:
+                cq = cq_arr[0]
+                s_map = cq.get("scores", {})
+                s_for_ans = s_map.get(str(conditional_answer), {})
+                for care, val in s_for_ans.items():
+                    scores[care] = scores.get(care, 0) + int(val)
+
+        return scores, flags
+
+    def run(self, answers: Dict[str, int], conditional_answer: str | None = None) -> Dict[str, Any]:
+        scores, flags = self._score(answers, conditional_answer)
+
+        assisted_cut = _to_int_threshold(self.final_thresholds.get("assisted_living"), 6)
+        memory_cut   = _to_int_threshold(self.final_thresholds.get("memory_care"), 7)
+        inhome_cut   = _to_int_threshold(self.final_thresholds.get("in_home"), 5)
+
+        # pick care_type using thresholds in typical priority order
+        if scores.get("memory_care", 0) >= memory_cut:
+            care_type = "memory_care"
+        elif scores.get("assisted_living", 0) >= assisted_cut:
+            care_type = "assisted_living"
+        elif scores.get("in_home", 0) >= inhome_cut:
+            care_type = "in_home"
+        else:
+            # fallback: highest score wins
+            care_type = max(scores, key=scores.get)
+
+        reasons = [f"{k.replace('_',' ').title()}: {v}" for k, v in scores.items()]
+        advisory = None
+        if "severe_cognitive_decline" in flags and care_type != "memory_care":
+            advisory = "Significant supervision indicated. Consider memory care or increased supports."
+
+        # Return a plain dict so app.py doesn’t care about dataclass import shape
+        return {
+            "care_type": care_type,
+            "scores": scores,
+            "flags": list(flags),
+            "reasons": reasons,
+            "advisory": advisory
         }
-        seen = set()
-        in_home = 0
-        assisted = 0
-        for f in flags:
-            d = domain_for_flag.get(f)
-            if not d or d in seen:
-                continue
-            seen.add(d)
-            in_home += int(self.scoring.get('in_home', {}).get(d, 0))
-            assisted += int(self.scoring.get('assisted_living', {}).get(d, 0))
 
-        # Dependence boost
-        if len(self.dependence_logic.intersection(flags)) >= 2:
-            assisted += int(self.scoring.get('assisted_living', {}).get('dependence', 0))
-        return in_home, assisted
-
-# ---------------- Calculator ----------------
-
+# ---------- calculator ----------
 @dataclass
 class CalcInputs:
-    state: str = 'National'
-    care_type: CareType = 'assisted_living'
-    room_type: Optional[str] = None
-    in_home_hours_per_day: int = 4
-    care_level: str = 'Medium'           # Low | Medium | High
-    mobility: str = 'Independent'        # Independent | Assisted | Non-ambulatory
-    chronic: str = 'Some'                # None | Some | Multiple/Complex
-    share_unit_with_person_b: bool = False
+    state: str = "National"
+    care_type: str = "in_home"
+    care_level: str = "Medium"
+    mobility: str = "Independent"
+    chronic: str = "Some"
+    room_type: str | None = None
+    in_home_hours_per_day: int | None = None
+    in_home_days_per_month: int | None = None
 
 class CalculatorEngine:
-    """Thin calculator using lookups/settings from calculator JSON."""
-    def __init__(self,
-                 calc_path: str = "senior_care_calculator_v5_full_with_instructions_ui.json",
-                 overlay_path: str = "senior_care_modular_overlay.json"):
-        self.calc = _load_json(calc_path)
-        self.overlay = _load_json(overlay_path)
-        self.settings = self.calc.get('settings', {})
-        self.lookups = self.calc.get('lookups', {})
+    """
+    Stable baseline:
+    - If your repo exposes a richer monthly_cost(inputs) method elsewhere, keep it.
+    - This class provides monthly_cost() using simple heuristics so the app compiles.
+    """
+    def __init__(self):
+        # Baseline market rates; replace with your JSON-driven settings if available
+        self.base = {
+            "in_home": 27,  # $/hour baseline
+            "assisted_living": {
+                "Studio": 4200, "1 Bedroom": 4800, "Shared": 3600
+            },
+            "memory_care": {
+                "Studio": 5600, "1 Bedroom": 6200, "Shared": 4800
+            }
+        }
+        self.state_adj = {
+            "National": 1.00, "Washington": 1.18, "California": 1.22, "Texas": 0.95, "Florida": 1.00
+        }
+        self.level_adj = {"Low": 0.92, "Medium": 1.00, "High": 1.12}
+        self.mob_adj = {"Independent": 0.98, "Assisted": 1.05, "Non-ambulatory": 1.12}
+        self.chronic_adj = {"None": 0.96, "Some": 1.00, "Multiple/Complex": 1.10}
 
-    def monthly_cost(self, inp: CalcInputs) -> int:
-        m = self.lookups
-        days = int(self.settings.get('days_per_month', 30))
-        state_mult = float(m.get('state_multipliers', {}).get(inp.state, 1.0))
+        # Expose settings stub so app.py can read from it safely if needed
+        self.settings = {
+            "ltc_monthly_add": 1800,
+            "display_cap_years_funded": 30
+        }
 
-        care_add = int(m.get('care_level_adders', {}).get(inp.care_level, 0))
+    def monthly_cost(self, inputs: CalcInputs | SimpleNamespace) -> int:
+        state = getattr(inputs, "state", "National")
+        care = getattr(inputs, "care_type", "in_home")
+        level = getattr(inputs, "care_level", "Medium")
+        mobility = getattr(inputs, "mobility", "Independent")
+        chronic = getattr(inputs, "chronic", "Some")
 
-        if inp.care_type == 'in_home':
-            mob_add = int(m.get('mobility_adders', {}).get('in_home', {}).get(inp.mobility, 0))
-        else:
-            mob_add = int(m.get('mobility_adders', {}).get('facility', {}).get(inp.mobility, 0))
+        s_adj = self.state_adj.get(state, 1.0)
+        lvl = self.level_adj.get(level, 1.0)
+        mob = self.mob_adj.get(mobility, 1.0)
+        chrn = self.chronic_adj.get(chronic, 1.0)
 
-        chronic_add = int(m.get('chronic_adders', {}).get(inp.chronic, 0))
+        if care == "in_home":
+            # use both hours/day and days/month if provided
+            hpd = int(getattr(inputs, "in_home_hours_per_day", 4) or 4)
+            dpm = int(getattr(inputs, "in_home_days_per_month", 20) or 20)
+            hours_month = max(hpd, 0) * max(dpm, 0)
+            hourly = self.base["in_home"]
+            est = hourly * hours_month
+            est = int(round(est * s_adj * lvl * mob * chrn))
+            return max(est, 0)
 
-        if inp.care_type in ('assisted_living','memory_care'):
-            base = int(m.get('room_type', {}).get(inp.room_type or 'Studio', 4200))
-            if inp.care_type == 'memory_care':
-                mc_mult = float(self.settings.get('memory_care_multiplier', 1.25))
-                base = int(round(base * mc_mult))
-            subtotal = base + care_add + mob_add + chronic_add
-            return int(round(subtotal * state_mult))
+        # facility scenarios
+        room = getattr(inputs, "room_type", None) or "Studio"
+        base_map = self.base["assisted_living"] if care == "assisted_living" else self.base["memory_care"]
+        base = base_map.get(room, list(base_map.values())[0])
+        est = int(round(base * s_adj * lvl * mob * chrn))
+        return max(est, 0)
 
-        # in-home
-        rate = int(m.get('in_home_care_matrix', {}).get(str(inp.in_home_hours_per_day), 42))
-        subtotal = int(inp.in_home_hours_per_day) * int(rate) * days
-        subtotal += care_add + mob_add + chronic_add
-        return int(round(subtotal * state_mult))
+    # minimal API used by earlier prototypes
+    def estimate(self, care_type: str) -> int:
+        if care_type == "in_home":
+            return 27 * 4 * 20  # baseline 4 hrs/day, 20 days/month
+        if care_type == "assisted_living":
+            return self.base["assisted_living"]["Studio"]
+        if care_type == "memory_care":
+            return self.base["memory_care"]["Studio"]
+        return 0
