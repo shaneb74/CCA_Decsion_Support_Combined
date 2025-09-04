@@ -1,6 +1,8 @@
-# app.py
-import streamlit as st
+# app.py (hardened imports + safe CalcInputs)
+import sys, traceback
+from types import SimpleNamespace
 from pathlib import Path
+import streamlit as st
 
 # Try matplotlib for donuts; fall back to Altair if not installed
 USE_MPL = True
@@ -10,20 +12,59 @@ except Exception:
     USE_MPL = False
     import altair as alt  # noqa
 
-# Engines from your repo (no stubs)
-from engines import PlannerEngine, CalculatorEngine, PlannerResult, CalcInputs
-
-# Init engines (engines.py resolves its own JSON paths)
-planner = PlannerEngine()
-calculator = CalculatorEngine()
-
 st.set_page_config(page_title='Senior Navigator • Planner + Cost', page_icon='🧭', layout='centered')
 
-# Ensure data/ exists (your JSONs live there)
+# ---------- import engines defensively ----------
+try:
+    import engines  # your repo module
+except Exception:
+    st.error("Failed to import `engines.py`. See trace below.")
+    st.code(traceback.format_exc())
+    st.stop()
+
+# pull only what we truly need
+PlannerEngine = getattr(engines, "PlannerEngine", None)
+CalculatorEngine = getattr(engines, "CalculatorEngine", None)
+CalcInputsClass = getattr(engines, "CalcInputs", None)
+
+if PlannerEngine is None or CalculatorEngine is None:
+    st.error("`engines.py` must define PlannerEngine and CalculatorEngine.")
+    st.stop()
+
+# helper: build a CalcInputs-like object even if the class is missing
+def make_inputs(**kwargs):
+    if CalcInputsClass is not None:
+        try:
+            return CalcInputsClass(**kwargs)
+        except TypeError:
+            # some versions use attributes instead of kwargs
+            obj = CalcInputsClass()
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            return obj
+    # fallback: SimpleNamespace that exposes attributes the engine reads
+    return SimpleNamespace(**kwargs)
+
+# ---------- init engines with visible error if they fail ----------
+try:
+    planner = PlannerEngine()
+except Exception:
+    st.error("PlannerEngine() initialization failed.")
+    st.code(traceback.format_exc())
+    st.stop()
+
+try:
+    calculator = CalculatorEngine()
+except Exception:
+    st.error("CalculatorEngine() initialization failed.")
+    st.code(traceback.format_exc())
+    st.stop()
+
+# ---------- data dir check ----------
 DATA_DIR = Path(__file__).resolve().parent / "data"
 if not DATA_DIR.exists():
-    st.error("Missing required `data/` folder with JSON files.")
-    st.stop()
+    st.warning("Missing `data/` folder. The app may not load JSON settings.")
+    # don't stop; engines might resolve paths internally
 
 # -------------------- helpers --------------------
 def reset_all():
@@ -45,11 +86,10 @@ def donut_altair(labels, values, title):
     return (ring + text).properties(title=title, width=360, height=360)
 
 def get_home_mod_catalog():
-    s = calculator.settings or {}
+    s = getattr(calculator, "settings", {}) or {}
     catalog = s.get('home_modifications_catalog')
     if isinstance(catalog, list) and catalog:
         return catalog
-    # Fallback catalog if not in settings
     return [
         {'key':'ramp', 'label':'Exterior ramp (installed)', 'avg':3500},
         {'key':'widen_doors', 'label':'Widen doorways (per doorway)', 'avg':900},
@@ -159,7 +199,7 @@ If that might be your situation, you can include a simple support plan for them 
             st.session_state.step = 'planner'
             st.rerun()
 
-# ---------- Planner (Guided Care Plan) ----------
+# ---------- Planner ----------
 elif st.session_state.step == 'planner':
     people = st.session_state.get('people', [])
     i = st.session_state.get('current_person', 0)
@@ -170,7 +210,7 @@ elif st.session_state.step == 'planner':
     st.caption(f"Person {i+1} of {len(people)}")
 
     answers = st.session_state.answers.get(person['id'], {})
-    qa = planner.qa
+    qa = getattr(planner, "qa", {})
 
     mobility_q_index = None
     for idx, q in enumerate(qa.get('questions', []), start=1):
@@ -191,7 +231,6 @@ elif st.session_state.step == 'planner':
     if mobility_q_index is not None:
         st.session_state.mobility_raw[person['id']] = answers.get(f"q{mobility_q_index}")
 
-    # infer flags from triggers for conditional q9
     def infer_flags(ans: dict) -> set:
         f = set()
         for idx, q in enumerate(qa.get('questions', []), start=1):
@@ -228,13 +267,25 @@ elif st.session_state.step == 'planner':
             st.rerun()
     with c2:
         if st.button('Next'):
-            result: PlannerResult = planner.run(answers, conditional_answer=conditional_answer)
+            try:
+                result = planner.run(answers, conditional_answer=conditional_answer)
+            except Exception:
+                st.error("PlannerEngine.run failed.")
+                st.code(traceback.format_exc())
+                st.stop()
+            # result may be dataclass or dict; normalize
+            care_type = getattr(result, "care_type", None) or result.get("care_type")
+            flags_out = getattr(result, "flags", None) or result.get("flags", [])
+            scores = getattr(result, "scores", None) or result.get("scores", {})
+            reasons = getattr(result, "reasons", None) or result.get("reasons", [])
+            advisory = getattr(result, "advisory", None) or result.get("advisory")
+
             st.session_state.planner_results[person['id']] = {
-                'care_type': result.care_type,
-                'flags': result.flags,
-                'scores': result.scores,
-                'reasons': result.reasons,
-                'advisory': result.advisory
+                'care_type': care_type,
+                'flags': set(flags_out) if isinstance(flags_out, (set, list, tuple)) else set(),
+                'scores': scores,
+                'reasons': reasons,
+                'advisory': advisory
             }
             if i+1 < len(people):
                 st.session_state.current_person = i+1
@@ -250,19 +301,20 @@ elif st.session_state.step == 'recommendations':
 
     for p in st.session_state.people:
         rec = st.session_state.planner_results[p['id']]
-        default = rec['care_type']
+        default = rec['care_type'] or 'in_home'
         st.subheader(f"{p['display_name']}: {default.replace('_',' ').title()} (recommended)")
         for r in rec.get('reasons', []):
-            st.write('• ' + r)
+            st.write('• ' + str(r))
         if rec.get('advisory'):
             st.info(rec['advisory'])
 
         care_choices = ['in_home','assisted_living','memory_care']
         pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
+        idx = care_choices.index(default) if default in care_choices else 0
         choice = st.selectbox(
             f"Care scenario for {p['display_name']}",
             [pretty[c] for c in care_choices],
-            index=care_choices.index(default),
+            index=idx,
             key=f"override_{p['id']}",
             help='Change the scenario here if you want to compare a different path.'
         )
@@ -285,16 +337,16 @@ elif st.session_state.step == 'calculator':
     for p in st.session_state.people:
         rec = st.session_state.planner_results[p['id']]
         pid = p['id']
-        care_type = st.session_state.get('care_overrides', {}).get(pid, rec['care_type'])
+        care_type = st.session_state.get('care_overrides', {}).get(pid, rec['care_type'] or 'in_home')
 
-        st.subheader(f"{p['display_name']} — Scenario: {care_type.replace('_',' ').title()} (recommendation: {rec['care_type'].replace('_',' ').title()})")
+        st.subheader(f"{p['display_name']} — Scenario: {care_type.replace('_',' ').title()} (recommendation: {rec['care_type'].replace('_',' ').title() if rec.get('care_type') else 'In-home Care'})")
 
         care_choices = ['in_home','assisted_living','memory_care']
         pretty = {'in_home':'In-home Care','assisted_living':'Assisted Living','memory_care':'Memory Care'}
         scenario_label = st.selectbox(
             f"Care scenario for {p['display_name']} (adjust here if needed)",
             [pretty[c] for c in care_choices],
-            index=care_choices.index(care_type),
+            index=care_choices.index(care_type) if care_type in care_choices else 0,
             key=f"calc_override_{pid}",
             help='Change the scenario without redoing questions.'
         )
@@ -306,7 +358,7 @@ elif st.session_state.step == 'calculator':
                     del st.session_state[k]
             care_type = care_type_new
 
-        # Mobility carryover from planner
+        # Mobility carryover
         raw_mob = st.session_state.get('mobility_raw', {}).get(pid)
         mobility_prefill = 'Independent'
         if raw_mob in (2, 3): 
@@ -314,7 +366,7 @@ elif st.session_state.step == 'calculator':
         if raw_mob == 4: 
             mobility_prefill = 'Non-ambulatory'
 
-        default_care_level = 'High' if ('severe_cognitive_decline' in rec['flags'] or care_type=='memory_care') else 'Medium'
+        default_care_level = 'High' if ('severe_cognitive_decline' in rec.get('flags', set()) or care_type=='memory_care') else 'Medium'
         care_level = st.selectbox('Care Level (staffing intensity)',
                                   ['Low','Medium','High'],
                                   index=['Low','Medium','High'].index(default_care_level),
@@ -346,14 +398,14 @@ elif st.session_state.step == 'calculator':
             chronic_options[1]:'Some',
             chronic_options[2]:'Multiple/Complex'
         }
-        default_chronic_label = chronic_options[2] if 'severe_cognitive_decline' in rec['flags'] else chronic_options[1]
+        default_chronic_label = chronic_options[2] if 'severe_cognitive_decline' in rec.get('flags', set()) else chronic_options[1]
         chronic_label = st.selectbox('Chronic Conditions', chronic_options,
                                      index=chronic_options.index(default_chronic_label),
                                      key=f"{pid}_chronic",
                                      help='Pick the closest description.')
         chronic = chronic_map_out[chronic_label]
 
-        inp = CalcInputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
+        inp = make_inputs(state=state, care_type=care_type, care_level=care_level, mobility=mobility, chronic=chronic)
 
         if care_type in ['assisted_living','memory_care']:
             for k in [f"{pid}_hours", f"{pid}_days"]:
@@ -361,7 +413,10 @@ elif st.session_state.step == 'calculator':
             room = st.selectbox('Room Type', ['Studio','1 Bedroom','Shared'],
                                 key=f"{pid}_room",
                                 help='Base rates vary by room size and privacy.')
-            inp.room_type = room
+            try:
+                setattr(inp, 'room_type', room)
+            except Exception:
+                pass
         else:
             if f"{pid}_room" in st.session_state: del st.session_state[f"{pid}_room"]
             hours = st.slider('In-home care hours per day', 0, 24, 4, 1,
@@ -370,25 +425,23 @@ elif st.session_state.step == 'calculator':
             days = st.slider('Days of care per month', 0, 31, 20, 1,
                              key=f"{pid}_days",
                              help='How many days per month caregivers are scheduled.')
-            # Convert to effective daily average while also passing explicit days if engine supports it
             effective_hours_per_day = int(round((hours * max(days, 0)) / 30.0)) if days is not None else int(hours)
             try:
-                inp.in_home_hours_per_day = int(effective_hours_per_day)
-            except Exception:
-                try:
-                    setattr(inp, 'in_home_hours_per_day', int(effective_hours_per_day))
-                except Exception:
-                    pass
-            try:
+                setattr(inp, 'in_home_hours_per_day', int(effective_hours_per_day))
                 setattr(inp, 'in_home_days_per_month', int(days))
             except Exception:
                 pass
 
-        monthly = calculator.monthly_cost(inp)
+        try:
+            monthly = calculator.monthly_cost(inp)
+        except Exception:
+            st.error("CalculatorEngine.monthly_cost failed.")
+            st.code("Inputs passed:\n" + str(vars(inp)))
+            st.code(traceback.format_exc())
+            st.stop()
+
         st.metric('Estimated Monthly Cost', f"${monthly:,.0f}")
-        if 'va_cache' not in st.session_state: 
-            st.session_state.va_cache = {}
-        st.session_state.va_cache[pid] = {'care_cost': monthly}
+        st.session_state.setdefault('va_cache', {}).setdefault(pid, {})['care_cost'] = monthly
         total += monthly
         st.divider()
 
@@ -450,10 +503,10 @@ elif st.session_state.step == 'household':
         household_other = hh_rent + hh_annuity + hh_invest + hh_trust + hh_other
         st.metric('Subtotal — Household monthly income', f"${household_other:,.0f}")
 
-    # Benefits: VA + LTC (aligned)
+    # Benefits (VA + LTC)
     with st.expander('Benefits (VA, Long-Term Care insurance)', expanded=True):
         st.markdown('**VA benefits**')
-        settings = calculator.settings
+        settings = getattr(calculator, "settings", {}) or {}
         va_mapr = settings.get('va_mapr_2025', {
             'Veteran (no dependents) — A&A': 2358,
             'Veteran + 1 dependent — A&A': 2795,
@@ -520,7 +573,7 @@ elif st.session_state.step == 'household':
                                  index=0 if st.session_state.get('household_values', {}).get('b_ltc','No')=='No' else 1,
                                  key='b_ltc')
 
-        _settings = calculator.settings
+        _settings = getattr(calculator, "settings", {}) or {}
         _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
 
         a_va = int(a_res['monthly']); st.session_state['a_va_monthly'] = a_va
@@ -536,9 +589,9 @@ elif st.session_state.step == 'household':
                                 key='home_decision',
                                 help='Pick one option; related fields will appear below.')
 
+            # monthly carrying cost and/or asset effects
         home_monthly = 0
-        auto_net_proceeds = 0
-
+        household_other = st.session_state.get('hh_dummy', 0)  # placeholder to keep later math simple
         if decision == 'Keep':
             st.info('If you keep the home, include carrying costs.')
             mortgage = currency_input('Mortgage', 'mortgage', 0)
@@ -560,15 +613,16 @@ elif st.session_state.step == 'household':
             fee_pct = fee_pct_label / 100.0
             auto_net_proceeds = max(int(value - payoff - value*fee_pct), 0)
             st.metric('Estimated net proceeds to assets', f"${auto_net_proceeds:,.0f}")
+            st.session_state['auto_net_proceeds'] = auto_net_proceeds
 
         elif decision == 'HELOC':
             st.info('Enter the monthly HELOC payment and the remaining available equity.')
             heloc_payment = currency_input('Monthly HELOC payment', 'heloc_payment_monthly', 0)
             remaining_equity = currency_input('Remaining available equity (adds to assets)', 'heloc_remaining_equity', 0)
             home_monthly = heloc_payment
-            auto_net_proceeds = remaining_equity
             st.metric('Subtotal — HELOC monthly payment', f"${home_monthly:,.0f}")
-            st.metric('Available equity added to assets', f"${auto_net_proceeds:,.0f}")
+            st.metric('Available equity added to assets', f"{remaining_equity:,.0f}")
+            st.session_state['auto_net_proceeds'] = remaining_equity
 
         else:  # Reverse mortgage
             st.info('Enter the expected monthly draw and any upfront fees.')
@@ -666,7 +720,7 @@ elif st.session_state.step == 'household':
     total_assets = common_assets_total + detailed_assets_total
 
     # Settings
-    _settings = calculator.settings
+    _settings = getattr(calculator, "settings", {}) or {}
     _ltc_add = int(_settings.get('ltc_monthly_add', 1800))
     _cap_years = int(_settings.get('display_cap_years_funded', 30))
 
@@ -695,7 +749,6 @@ elif st.session_state.step == 'household':
         gap = max(overall_monthly - monthly_income, 0)
         st.metric('Estimated Monthly Gap', f"${gap:,.0f}")
 
-    # Cache summary for details page
     st.session_state.summary_cache = {
         'per_person_costs': {p['display_name']: st.session_state.get('va_cache', {}).get(p['id'],{}).get('care_cost',0) for p in st.session_state.people},
         'household_assets_total': total_assets,
