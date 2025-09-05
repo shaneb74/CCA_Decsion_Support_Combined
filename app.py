@@ -1,10 +1,9 @@
 # app.py — Senior Navigator (Planner → Recommendation → Costs → Household → Breakdown)
-# Stable build: no matplotlib, Altair optional, JSON paths explicit, VA/LTC wizard included.
+# Stable build: no matplotlib, Altair optional behind a flag, VA/LTC wizard included.
 
 from pathlib import Path
 from types import SimpleNamespace
 import traceback
-
 import streamlit as st
 
 # ---------- Page config ----------
@@ -212,7 +211,6 @@ elif st.session_state.step == "planner":
             key=f"{person['id']}_q{idx}",
             help=q.get("help")
         )
-        # map back to numeric key
         sel_key = ordered_keys[[opts_map[k] for k in ordered_keys].index(sel_label)]
         answers[f"q{idx}"] = int(sel_key)
 
@@ -398,6 +396,9 @@ elif st.session_state.step == "calculator":
                 setattr(inp, "in_home_days_per_month", int(days))
             except Exception:
                 pass
+            # Optional debug peek if needed: append ?debug=1 to the URL
+            if st.query_params.get("debug") == "1":
+                st.caption(f"DEBUG for {name}: {hours} hours/day, {days} days/month")
 
         # Compute monthly cost
         try:
@@ -446,11 +447,14 @@ elif st.session_state.step == "household":
 
     vals = st.session_state.get("house_vals", {})
 
+    # SAFE helper: returns widget value but does not reassign the same session_state key
     def money(label, key, default=0):
         v0 = int(vals.get(key, default) or 0)
         v = st.number_input(label, min_value=0, step=50, value=v0, key=key)
-        st.session_state[key] = int(v)
-        return int(v)
+        try:
+            return int(v)
+        except Exception:
+            return 0
 
     # Monthly Income — Individual
     with st.expander("Monthly Income — Individual", expanded=True):
