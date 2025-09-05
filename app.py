@@ -1,6 +1,10 @@
 # app.py — Senior Navigator (Planner → Recommendation → Costs → Household → Breakdown)
-# Stable build with: VA/LTC wizard, Home Decision math carried into assets, Home Mods upfront/amortize,
+# Stable build with: VA/LTC wizard, Home Decision math to assets, Home Mods upfront/amortize,
 # One-time outlays table, conditional Q9, in-home days slider wired.
+# CHANGES IN THIS FILE ONLY:
+# 1) Home(Keep): HOA + Utilities included in monthly subtotal
+# 2) Home Mods: layout cleanup, payment choice moved to bottom
+# 3) New drawer: "Other monthly costs" → other_monthly_total
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +24,7 @@ ENABLE_VA_WIZARD = True
 ENABLE_HOME_DECISION = True
 ENABLE_HOME_MODS = True
 ENABLE_DETAILS_PAGE = True
-ENABLE_CHARTS = False  # keep False unless Altair is desired
+ENABLE_CHARTS = False  # keep False unless Altair + charts desired
 
 # ---------- Optional charts dependency ----------
 try:
@@ -598,7 +602,7 @@ elif st.session_state.step == "household":
             benefits_total = (a_va + (ltc_add if a_ltc == "Yes" else 0)) + (b_va + (ltc_add if b_ltc == "Yes" else 0))
             st.metric("Subtotal — Benefits (VA + LTC add-ons)", f"${benefits_total:,.0f}")
 
-    # Home decision (now with "apply proceeds to assets" toggle)
+    # Home decision (Keep now includes HOA + Utilities)
     if ENABLE_HOME_DECISION:
         with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=False):
             hd_choice = st.selectbox(
@@ -621,7 +625,16 @@ elif st.session_state.step == "household":
                     tax = st.number_input("Monthly property taxes", min_value=0, step=25, key="home_keep_tax")
                 with col3:
                     ins = st.number_input("Monthly homeowners insurance", min_value=0, step=25, key="home_keep_ins")
-                home_monthly_total = int(mort + tax + ins)
+
+                c4, c5 = st.columns(2)
+                with c4:
+                    hoa = st.number_input("HOA/maintenance fee (monthly)", min_value=0, step=25, key="home_keep_hoa",
+                                          help="Condo/HOA dues or routine maintenance set-aside.")
+                with c5:
+                    utils = st.number_input("Average monthly utilities", min_value=0, step=25, key="home_keep_utils",
+                                            help="Electric, gas, water, trash, internet.")
+
+                home_monthly_total = int(mort + tax + ins + hoa + utils)
 
             elif hd_choice == "Sell":
                 col1, col2, col3 = st.columns(3)
@@ -663,11 +676,17 @@ elif st.session_state.step == "household":
             st.session_state["home_monthly_total"] = int(home_monthly_total)
             st.session_state["home_net_proceeds"] = int(home_proceeds if apply_to_assets else 0)
 
-    # Home modifications (amortize vs upfront)
+    # Home modifications (layout cleaned; payment choice moved to bottom)
     if ENABLE_HOME_MODS:
         with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=False):
-            st.caption("Select applicable projects. Costs are averages; scale by level and amortize over months.")
+            st.caption("Select applicable projects. Costs are averages; choose finish level, select work, then pick how to pay.")
 
+            # Finish level first
+            level = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1, key="mods_level",
+                                 help="Budget ≈ 0.8×, Standard = 1.0×, Custom ≈ 1.4×")
+            mult = {"Budget": 0.8, "Standard": 1.0, "Custom": 1.4}[level]
+
+            # Compact two-column checklist with inline qty
             projects = [
                 ("Grab bars & railings", 800),
                 ("Widen doorways", 2500),
@@ -677,7 +696,23 @@ elif st.session_state.step == "household":
                 ("Lighting & fall-risk improvements", 1500),
                 ("Smart home monitoring/sensors", 1200),
             ]
+            total_capex = 0
+            cols = st.columns(2)
+            for i, (label, avg) in enumerate(projects):
+                with cols[i % 2]:
+                    row = st.columns([0.08, 0.62, 0.30])  # [checkbox, label, qty]
+                    with row[0]:
+                        selected = st.checkbox("", key=f"mod_{i}")
+                    with row[1]:
+                        st.write(f"**{label}** · avg ${avg:,}")
+                    with row[2]:
+                        qty = st.number_input("Qty", min_value=1, max_value=10, value=1, step=1,
+                                              key=f"mod_{i}_qty", label_visibility="collapsed")
+                    if selected:
+                        total_capex += int(avg * mult * qty)
 
+            # Payment method at the bottom near totals
+            st.divider()
             pay_method = st.radio(
                 "Payment method",
                 ["Amortize monthly", "Pay upfront (one-time)"],
@@ -686,25 +721,11 @@ elif st.session_state.step == "household":
                 horizontal=True,
                 help="Amortize to see a monthly impact, or pay upfront to remove it from monthly costs."
             )
-
-            level = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1, key="mods_level",
-                                 help="Budget ≈ 0.8×, Standard = 1.0×, Custom ≈ 1.4×")
-            mult = {"Budget": 0.8, "Standard": 1.0, "Custom": 1.4}[level]
-
             if pay_method == "Amortize monthly":
                 months = st.slider("Amortize over (months)", 12, 120, 60, 6, key="mods_amort")
             else:
                 months = 0
 
-            total_capex = 0
-            cols = st.columns(2)
-            for i, (label, avg) in enumerate(projects):
-                with cols[i % 2]:
-                    if st.checkbox(f"{label} (avg ${avg:,})", key=f"mod_{i}"):
-                        qty = st.number_input("Qty", min_value=1, max_value=10, value=1, step=1, key=f"mod_{i}_qty")
-                        total_capex += int(avg * mult * qty)
-
-            # Deduct upfront from assets?
             deduct_upfront = st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
 
             if pay_method == "Amortize monthly":
@@ -720,37 +741,24 @@ elif st.session_state.step == "household":
 
             st.session_state["mods_capex_total"] = int(total_capex)
 
-    # Assets — common
-    with st.expander("Assets — common", expanded=False):
+    # Other monthly costs (new drawer)
+    with st.expander("Other monthly costs (medical & living)", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
-            a_check = st.number_input("Checking", min_value=0, step=500, key="asset_check")
-            a_savings = st.number_input("Savings/Money Market", min_value=0, step=500, key="asset_save")
+            meds = st.number_input("Medications (monthly)", min_value=0, step=25, key="omc_meds")
+            health = st.number_input("Health insurance / Medicare*", min_value=0, step=25, key="omc_health",
+                                     help="Medicare premiums, supplemental, Part D, Advantage, etc.")
         with c2:
-            a_cd = st.number_input("CDs", min_value=0, step=500, key="asset_cd")
-            a_broker = st.number_input("Brokerage (taxable)", min_value=0, step=500, key="asset_broker")
+            dental = st.number_input("Dental insurance", min_value=0, step=25, key="omc_dental")
+            transport = st.number_input("Transportation", min_value=0, step=25, key="omc_transport",
+                                        help="Fuel, rideshare, paratransit, etc.")
         with c3:
-            a_cash = st.number_input("Cash on hand", min_value=0, step=100, key="asset_cash")
-            a_other = st.number_input("Other liquid", min_value=0, step=500, key="asset_other_liq")
-        common_total = int(a_check + a_savings + a_cd + a_broker + a_cash + a_other)
-        st.metric("Subtotal — Common assets", f"${common_total:,.0f}")
-        st.session_state["assets_common_total"] = common_total
+            food = st.number_input("Groceries / meals", min_value=0, step=25, key="omc_food")
+            misc = st.number_input("Other recurring", min_value=0, step=25, key="omc_misc")
 
-    # Assets — detailed
-    with st.expander("Assets — detailed (retirement, annuities, etc.)", expanded=False):
-        d1, d2, d3 = st.columns(3)
-        with d1:
-            a_ira = st.number_input("Traditional/ROTH IRA", min_value=0, step=1000, key="asset_ira")
-            a_401k = st.number_input("401(k)/403(b)", min_value=0, step=1000, key="asset_401k")
-        with d2:
-            a_ann = st.number_input("Annuities (surrender/cash value)", min_value=0, step=1000, key="asset_annuity")
-            a_hsa = st.number_input("HSA balance", min_value=0, step=500, key="asset_hsa")
-        with d3:
-            a_vehicle = st.number_input("Vehicles (resale value)", min_value=0, step=500, key="asset_vehicle")
-            a_other_f = st.number_input("Other financial", min_value=0, step=500, key="asset_other_fin")
-        detailed_total = int(a_ira + a_401k + a_ann + a_hsa + a_vehicle + a_other_f)
-        st.metric("Subtotal — Detailed assets", f"${detailed_total:,.0f}")
-        st.session_state["assets_detailed_total"] = detailed_total
+        other_monthly_total = int(meds + health + dental + transport + food + misc)
+        st.metric("Subtotal — Other monthly costs", f"${other_monthly_total:,.0f}")
+        st.session_state["other_monthly_total"] = other_monthly_total
 
     st.divider()
     c1, c2, c3 = st.columns(3)
@@ -787,7 +795,7 @@ elif st.session_state.step == "breakdown":
     inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0)) if len(people) > 1 else 0
     inc_house = int(s.get("hh_rent", 0)) + int(s.get("hh_annuity", 0)) + int(s.get("hh_invest", 0)) + int(s.get("hh_trust", 0)) + int(s.get("hh_other", 0))
 
-    # Benefits
+    # Benefits (from VA wizard)
     va_A = int(s.get("a_va_monthly", 0))
     va_B = int(s.get("b_va_monthly", 0)) if len(people) > 1 else 0
 
@@ -804,7 +812,7 @@ elif st.session_state.step == "breakdown":
     assets_common  = int(s.get("assets_common_total", 0))
     assets_detail  = int(s.get("assets_detailed_total", 0))
 
-    # Assets total: add home proceeds; subtract upfront mods (already stored as net upfront if deduct toggle was on)
+    # Assets total: add home proceeds; subtract upfront mods
     assets_total   = max(assets_common + assets_detail + home_proceeds - mods_upfront, 0)
 
     # Totals
