@@ -7,6 +7,44 @@ import streamlit as st
 # ----- Page config -----
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
 
+
+# ---------- Safe answer-map helpers (prevents KeyError on non-1..N keys) ----------
+def order_answer_map(amap):
+    """Return (ordered_keys, ordered_labels) safely whether keys are '1','2',... or arbitrary strings.
+    - If all keys are int-like, sort numerically.
+    - Else, sort by key as str for stability.
+    """
+    if not isinstance(amap, dict) or not amap:
+        return [], []
+    keys = list(amap.keys())
+    def _is_intlike(x):
+        try:
+            int(str(x))
+            return True
+        except Exception:
+            return False
+    if all(_is_intlike(k) for k in keys):
+        ordered_keys = [str(k) for k in sorted(int(str(k)) for k in keys)]
+    else:
+        ordered_keys = [str(k) for k in sorted(map(str, keys))]
+    ordered_labels = [amap[k] for k in ordered_keys]
+    return ordered_keys, ordered_labels
+
+def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None):
+    """Render a radio from a JSON answer map and return the *selected key* (string).
+    Falls back to default_key (if provided) or the first ordered option.
+    """
+    ordered_keys, ordered_labels = order_answer_map(amap)
+    if not ordered_labels:
+        return default_key
+    if default_key is not None and str(default_key) in ordered_keys:
+        idx = ordered_keys.index(str(default_key))
+    else:
+        idx = 0
+    sel_label = st.radio(label, options=ordered_labels, index=idx, key=key, help=help_text)
+    return ordered_keys[ordered_labels.index(sel_label)]
+
+
 # ----- Paths: all files in repo root -----
 ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
