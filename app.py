@@ -219,7 +219,7 @@ Would you like to evaluate a care support plan for a spouse or parter now so the
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("No, let's just plan for **{primary}** "):
+        if st.button(f"No, let's just plan for **{primary}**"):
             st.session_state.step = "planner"
             st.rerun()
     with c2:
