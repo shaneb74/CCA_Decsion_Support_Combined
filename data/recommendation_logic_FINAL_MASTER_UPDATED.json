@@ -26,7 +26,7 @@
     "dependence_flags_min": 2
   },
 
-  # ===== NEW: strict precedence (first match wins) =====
+  # NEW: strict precedence (first match wins)
   "decision_precedence": [
     "memory_care_override",
     "dependence_flag_logic",
@@ -41,7 +41,7 @@
     "in_home_with_support_fallback"
   ],
 
-  // ===== RULES (kept your keys, clarified criteria & messages) =====
+  # ===== RULES (kept your keys, clarified criteria & messages) =====
   "final_recommendation": {
     "memory_care_override": {
       "criteria": "Trigger if severe_cognitive_risk AND (no_support OR high_dependence OR high_safety_concern)",
@@ -110,7 +110,7 @@
     }
   },
 
-  // === (UNCHANGED) Context parts used to render the narrative ===
+  # === (UNCHANGED) Context parts used to render the narrative ===
   "greeting_templates": ["Hi", "Hello", "Hey", "Greetings", "Good to connect with"],
   "positive_state_templates": ["doing amazing", "thriving beautifully", "on top of things", "shining bright", "doing wonderfully"],
   "encouragement_templates": ["Keep shining", "Stay amazing", "Keep thriving", "Continue doing great", "Stay strong"],
@@ -168,7 +168,7 @@
     "can_afford_care": ["having no worries about care costs", "being financially secure for any care", "feeling confident about covering care expenses", "able to afford care without stress", "comfortable with paying for any care needed"]
   },
 
-  // Keep the legacy sections that other parts of your code may reference:
+  # Keep the legacy sections that other parts of your code may reference:
   "social_isolation_warning": {
     "trigger_if_flags": ["high_risk", "mental_health_concern"],
     "message_template": "{greeting} {name}, feeling lonely or down can weigh on you. {recommendation} could bring more connection and warmth to your days. {preference_clause}"
