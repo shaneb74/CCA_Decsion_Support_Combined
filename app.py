@@ -773,7 +773,7 @@ elif st.session_state.step == "household":
             st.session_state.step = "breakdown"
             st.rerun()
     with cols[2]:
-        if st.button("Finish"):
+        if st.button("Start Over"):
             st.session_state.step = "intro"
             st.rerun()
 
