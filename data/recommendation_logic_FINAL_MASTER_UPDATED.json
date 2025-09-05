@@ -18,15 +18,11 @@
       "cognitive_function": 2
     }
   },
-
-  # ===== NEW: machine-readable thresholds =====
   "final_decision_thresholds": {
     "assisted_living_min": 6,
     "in_home_min": 3,
     "dependence_flags_min": 2
   },
-
-  # NEW: strict precedence (first match wins)
   "decision_precedence": [
     "memory_care_override",
     "dependence_flag_logic",
@@ -40,81 +36,84 @@
     "no_care_needed",
     "in_home_with_support_fallback"
   ],
-
-  # ===== RULES (kept your keys, clarified criteria & messages) =====
   "final_recommendation": {
     "memory_care_override": {
       "criteria": "Trigger if severe_cognitive_risk AND (no_support OR high_dependence OR high_safety_concern)",
       "message_template": "{greeting} {name}, with significant memory challenges and limited daily support, **memory care** is the safest way to ensure you’re well supported. {preference_clause}",
       "outcome": "memory_care"
     },
-
     "dependence_flag_logic": {
       "criteria": "Trigger if at least 2 of: high_dependence, high_mobility_dependence, no_support, severe_cognitive_risk, high_safety_concern",
       "message_template": "{greeting} {name}, needs like {key_issues} point to **assisted living** for reliable daily help and safety. {preference_clause}",
       "outcome": "assisted_living"
     },
-
     "assisted_living_score": {
       "criteria": "assisted_living_score >= assisted_living_min",
       "message_template": "{greeting} {name}, based on needs like {key_issues}, **assisted living** could provide the care and comfort you deserve. {preference_clause}",
       "outcome": "assisted_living"
     },
-
     "balanced_al": {
       "criteria": "assisted_living_score >= assisted_living_min AND in_home_score >= in_home_min AND NONE OF (high_dependence, high_mobility_dependence, no_support, high_safety_concern, severe_cognitive_risk)",
       "message_template": "{greeting} {name}, with {key_issues}, **assisted living** is a strong fit now; if things stabilize, in-home could be revisited later. {preference_clause}",
       "outcome": "assisted_living"
     },
-
     "in_home_with_mobility_challenges": {
       "criteria": "assisted_living_score >= (assisted_living_min - 1) AND in_home_score >= in_home_min AND high_mobility_dependence AND NOT (moderate_cognitive_decline OR severe_cognitive_risk)",
       "message_template": "{greeting} {name}, your mobility needs ({key_issues}) make **in-home care with equipment and help** a good fit, though **assisted living** could make daily routines easier. {preference_clause}",
       "outcome": "in_home"
     },
-
     "in_home_possible_with_cognitive_and_safety_risks": {
       "criteria": "in_home_score >= in_home_min AND assisted_living_score >= in_home_min AND ANY OF (moderate_cognitive_decline, severe_cognitive_risk, moderate_safety_concern, high_safety_concern)",
       "message_template": "{greeting} {name}, you’re holding strong, but {key_issues} mean **in-home care with extra support** is essential. Let’s make safety the priority. {preference_clause}",
       "outcome": "in_home"
     },
-
     "in_home_with_support_and_financial_needs": {
       "criteria": "in_home_score >= in_home_min AND assisted_living_score < assisted_living_min AND needs_financial_assistance",
       "message_template": "{greeting} {name}, **in-home care** suits your needs like {key_issues}; with costs in mind, we’ll focus on affordable support. {preference_clause}",
       "outcome": "in_home"
     },
-
     "independent_with_safety_concern": {
       "criteria": "Independent otherwise, but moderate_safety_concern OR high_safety_concern present; NO cognitive or heavy dependence flags",
       "message_template": "{greeting} {name}, you’re doing well overall; a few safety tweaks for {key_issues} can keep home comfortable. {preference_clause}",
       "outcome": "in_home"
     },
-
     "independent_no_support_risk": {
       "criteria": "Independent & safe; no_support present; NO cognitive/major mobility flags",
       "message_template": "{greeting} {name}, you’re managing beautifully, but with **no regular support** ({key_issues}), a light **in-home check-in plan** helps. {preference_clause}",
       "outcome": "in_home"
     },
-
     "no_care_needed": {
       "criteria": "assisted_living_score < in_home_min AND in_home_score < in_home_min AND NO flags among: high_dependence, high_mobility_dependence, no_support, severe_cognitive_risk, high_safety_concern, moderate_cognitive_decline, moderate_safety_concern, high_risk",
       "message_template": "{greeting} {name}, you’re {positive_state} with **no support needs** right now. {encouragement} — we’re here if things change. {preference_clause}",
       "outcome": "none"
     },
-
     "in_home_with_support_fallback": {
       "criteria": "Default when nothing else selected",
       "message_template": "{greeting} {name}, **in-home care with help for {key_issues}** keeps you comfortable at home, especially since you {home_preference}. {preference_clause}",
       "outcome": "in_home"
     }
   },
-
-  # === (UNCHANGED) Context parts used to render the narrative ===
-  "greeting_templates": ["Hi", "Hello", "Hey", "Greetings", "Good to connect with"],
-  "positive_state_templates": ["doing amazing", "thriving beautifully", "on top of things", "shining bright", "doing wonderfully"],
-  "encouragement_templates": ["Keep shining", "Stay amazing", "Keep thriving", "Continue doing great", "Stay strong"],
-
+  "greeting_templates": [
+    "Hi",
+    "Hello",
+    "Hey",
+    "Greetings",
+    "Good to connect with"
+  ],
+  "positive_state_templates": [
+    "doing amazing",
+    "thriving beautifully",
+    "on top of things",
+    "shining bright",
+    "doing wonderfully"
+  ],
+  "encouragement_templates": [
+    "Keep shining",
+    "Stay amazing",
+    "Keep thriving",
+    "Continue doing great",
+    "Stay strong"
+  ],
   "preference_clause_templates": {
     "open_to_move": [
       "Since you’re open to new options, let’s explore what feels like the best fit for you.",
@@ -145,36 +144,153 @@
       "Let’s explore the best options to keep you comfortable and secure."
     ]
   },
-
   "issue_phrases": {
-    "high_dependence": ["needing help with daily tasks like dressing or eating", "relying on others for most daily activities", "finding daily tasks like bathing tough without help", "depending heavily on support for everyday chores", "needing a lot of assistance with daily routines"],
-    "moderate_dependence": ["needing some help with tasks like meals or bathing", "occasionally relying on support for daily chores", "managing most tasks but needing help sometimes", "requiring occasional assistance with daily routines", "needing a bit of help with everyday activities"],
-    "high_mobility_dependence": ["having significant mobility challenges", "needing a wheelchair or major help to move around", "struggling to get around without a lot of support", "relying on assistance for most movement", "finding it tough to move without significant help"],
-    "moderate_mobility": ["using a cane or walker for support", "needing some assistance with movement", "getting around okay but needing help for longer distances", "managing mobility with occasional support", "using support like a cane for some activities"],
-    "high_risk": ["feeling isolated or down most of the time", "struggling with loneliness or low mood", "often feeling disconnected from others", "dealing with frequent feelings of isolation", "finding it hard to stay connected or uplifted"],
-    "moderate_risk": ["feeling a bit disconnected or down at times", "having occasional moments of loneliness", "sometimes feeling isolated or low", "noticing some down moments or social disconnection", "occasionally feeling a bit alone or down"],
-    "mental_health_concern": ["feeling down or isolated more than usual", "navigating some emotional challenges", "experiencing frequent low moods or loneliness", "dealing with tough emotions like isolation", "finding emotions or loneliness a bit heavy"],
-    "no_support": ["not having regular help from family or caregivers", "being mostly on your own without support", "lacking consistent caregiver assistance", "managing without regular family support", "having no steady help at home"],
-    "limited_support": ["having only occasional check-ins from others", "limited help from family or caregivers", "getting support only now and then", "relying on infrequent caregiver visits", "having sparse support from others"],
-    "moderate_cognitive_decline": ["noticing some memory or focus challenges", "having memory slips that affect daily tasks", "dealing with occasional memory issues", "finding focus or memory a bit tricky at times", "noticing some trouble with memory or tasks"],
-    "mild_cognitive_decline": ["slight forgetfulness but managing okay", "occasional memory lapses with support nearby", "minor memory slips but handling them well", "a bit forgetful but it’s not a big issue", "having small memory lapses but doing fine"],
-    "severe_cognitive_risk": ["significant memory issues without daily help", "memory challenges that need close attention", "serious memory problems with no one around", "struggling with memory and often alone", "facing major memory issues without support"],
-    "moderate_safety_concern": ["some worries about falls or emergencies at home", "feeling a bit uneasy about home safety", "occasional concerns about staying safe at home", "noticing some risks like falls at home", "having a few worries about home safety"],
-    "high_safety_concern": ["feeling unsafe at home due to risks like falls", "major concerns about emergencies at home", "often worried about safety at home", "significant risks making home feel unsafe", "feeling at risk due to home safety issues"],
-    "low_access": ["difficulty getting to stores or doctors", "needing help to access services", "finding it tough to reach pharmacies or doctors", "struggling to get to essential services", "having trouble accessing stores or care"],
-    "very_low_access": ["having no easy way to reach services", "relying on others to get to stores or doctors", "no simple access to pharmacies or doctors", "needing a lot of help to reach services", "finding services really hard to access"],
-    "needs_financial_assistance": ["worrying about the cost of care", "needing help to make care affordable", "feeling concerned about paying for support", "finding care costs a big challenge", "stressing about how to cover care expenses"],
-    "moderate_financial_concern": ["needing to budget carefully for care", "being mindful of care costs", "managing finances but watching costs closely", "feeling some concern about care expenses", "keeping an eye on care costs to stay comfortable"],
-    "can_afford_care": ["having no worries about care costs", "being financially secure for any care", "feeling confident about covering care expenses", "able to afford care without stress", "comfortable with paying for any care needed"]
+    "high_dependence": [
+      "needing help with daily tasks like dressing or eating",
+      "relying on others for most daily activities",
+      "finding daily tasks like bathing tough without help",
+      "depending heavily on support for everyday chores",
+      "needing a lot of assistance with daily routines"
+    ],
+    "moderate_dependence": [
+      "needing some help with tasks like meals or bathing",
+      "occasionally relying on support for daily chores",
+      "managing most tasks but needing help sometimes",
+      "requiring occasional assistance with daily routines",
+      "needing a bit of help with everyday activities"
+    ],
+    "high_mobility_dependence": [
+      "having significant mobility challenges",
+      "needing a wheelchair or major help to move around",
+      "struggling to get around without a lot of support",
+      "relying on assistance for most movement",
+      "finding it tough to move without significant help"
+    ],
+    "moderate_mobility": [
+      "using a cane or walker for support",
+      "needing some assistance with movement",
+      "getting around okay but needing help for longer distances",
+      "managing mobility with occasional support",
+      "using support like a cane for some activities"
+    ],
+    "high_risk": [
+      "feeling isolated or down most of the time",
+      "struggling with loneliness or low mood",
+      "often feeling disconnected from others",
+      "dealing with frequent feelings of isolation",
+      "finding it hard to stay connected or uplifted"
+    ],
+    "moderate_risk": [
+      "feeling a bit disconnected or down at times",
+      "having occasional moments of loneliness",
+      "sometimes feeling isolated or low",
+      "noticing some down moments or social disconnection",
+      "occasionally feeling a bit alone or down"
+    ],
+    "mental_health_concern": [
+      "feeling down or isolated more than usual",
+      "navigating some emotional challenges",
+      "experiencing frequent low moods or loneliness",
+      "dealing with tough emotions like isolation",
+      "finding emotions or loneliness a bit heavy"
+    ],
+    "no_support": [
+      "not having regular help from family or caregivers",
+      "being mostly on your own without support",
+      "lacking consistent caregiver assistance",
+      "managing without regular family support",
+      "having no steady help at home"
+    ],
+    "limited_support": [
+      "having only occasional check-ins from others",
+      "limited help from family or caregivers",
+      "getting support only now and then",
+      "relying on infrequent caregiver visits",
+      "having sparse support from others"
+    ],
+    "moderate_cognitive_decline": [
+      "noticing some memory or focus challenges",
+      "having memory slips that affect daily tasks",
+      "dealing with occasional memory issues",
+      "finding focus or memory a bit tricky at times",
+      "noticing some trouble with memory or tasks"
+    ],
+    "mild_cognitive_decline": [
+      "slight forgetfulness but managing okay",
+      "occasional memory lapses with support nearby",
+      "minor memory slips but handling them well",
+      "a bit forgetful but it’s not a big issue",
+      "having small memory lapses but doing fine"
+    ],
+    "severe_cognitive_risk": [
+      "significant memory issues without daily help",
+      "memory challenges that need close attention",
+      "serious memory problems with no one around",
+      "struggling with memory and often alone",
+      "facing major memory issues without support"
+    ],
+    "moderate_safety_concern": [
+      "some worries about falls or emergencies at home",
+      "feeling a bit uneasy about home safety",
+      "occasional concerns about staying safe at home",
+      "noticing some risks like falls at home",
+      "having a few worries about home safety"
+    ],
+    "high_safety_concern": [
+      "feeling unsafe at home due to risks like falls",
+      "major concerns about emergencies at home",
+      "often worried about safety at home",
+      "significant risks making home feel unsafe",
+      "feeling at risk due to home safety issues"
+    ],
+    "low_access": [
+      "difficulty getting to stores or doctors",
+      "needing help to access services",
+      "finding it tough to reach pharmacies or doctors",
+      "struggling to get to essential services",
+      "having trouble accessing stores or care"
+    ],
+    "very_low_access": [
+      "having no easy way to reach services",
+      "relying on others to get to stores or doctors",
+      "no simple access to pharmacies or doctors",
+      "needing a lot of help to reach services",
+      "finding services really hard to access"
+    ],
+    "needs_financial_assistance": [
+      "worrying about the cost of care",
+      "needing help to make care affordable",
+      "feeling concerned about paying for support",
+      "finding care costs a big challenge",
+      "stressing about how to cover care expenses"
+    ],
+    "moderate_financial_concern": [
+      "needing to budget carefully for care",
+      "being mindful of care costs",
+      "managing finances but watching costs closely",
+      "feeling some concern about care expenses",
+      "keeping an eye on care costs to stay comfortable"
+    ],
+    "can_afford_care": [
+      "having no worries about care costs",
+      "being financially secure for any care",
+      "feeling confident about covering care expenses",
+      "able to afford care without stress",
+      "comfortable with paying for any care needed"
+    ]
   },
-
-  # Keep the legacy sections that other parts of your code may reference:
   "social_isolation_warning": {
-    "trigger_if_flags": ["high_risk", "mental_health_concern"],
+    "trigger_if_flags": [
+      "high_risk",
+      "mental_health_concern"
+    ],
     "message_template": "{greeting} {name}, feeling lonely or down can weigh on you. {recommendation} could bring more connection and warmth to your days. {preference_clause}"
   },
   "cognitive_decline_warning": {
-    "trigger_if_flags": ["moderate_cognitive_decline", "severe_cognitive_risk"],
+    "trigger_if_flags": [
+      "moderate_cognitive_decline",
+      "severe_cognitive_risk"
+    ],
     "criteria": "Show if moderate_cognitive_decline or severe_cognitive_risk is present",
     "message_template": "{greeting} {name}, those memory challenges are something to watch. {recommendation} can provide the right support to keep you safe. {preference_clause}"
   }
