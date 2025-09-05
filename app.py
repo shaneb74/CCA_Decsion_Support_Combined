@@ -224,13 +224,13 @@ Would you like to evaluate a care support plan for a spouse or parter now so the
             st.session_state.step = "planner"
             st.rerun()
     with c2:
-        if st.button("Add spouse/partner and continue"):
-            if single and st.session_state.get("care_partner_add"):
-                st.session_state.people.append({
-                    "id": "B",
-                    "display_name": st.session_state.get("care_partner_name") or "Spouse/Partner",
-                    "relationship": "spouse"
-                })
+        if st.button("Add spouse/partner and continue", 
+                 disabled=not st.session_state.get("care_partner_add", False)):
+        st.session_state.people.append({
+            "id": "B",
+            "display_name": st.session_state.get("care_partner_name") or "Spouse/Partner",
+            "relationship": "spouse"
+        })
             st.session_state.step = "planner"
             st.rerun()
 
