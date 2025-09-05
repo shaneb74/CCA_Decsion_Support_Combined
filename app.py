@@ -404,8 +404,8 @@ elif st.session_state.step == "recommendations":
         st.subheader(f"{p['display_name']}: {default.replace('_', ' ').title()} (recommended)")
 
         # reasons bullets
-        for r in rec.get("reasons", []):
-            st.write("• " + str(r))
+        #for r in rec.get("reasons", []):
+        #    st.write("• " + str(r))
 
         # conversational blurb: try multiple keys, fallback to template
         narrative = (
