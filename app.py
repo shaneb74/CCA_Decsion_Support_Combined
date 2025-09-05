@@ -1,6 +1,6 @@
 # app.py — Senior Navigator (Planner → Recommendation → Costs → Household → Breakdown)
-# Solid build: JSON-driven planner via engines.py, VA/LTC wizard, home decision & mods,
-# assets drawers, safe session handling, and optional charts behind a flag.
+# Stable build with: VA/LTC wizard, Home Decision math carried into assets, Home Mods upfront/amortize,
+# One-time outlays table, conditional Q9, in-home days slider wired.
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +17,10 @@ ENABLE_INHOME_DAYS_PER_MONTH = True
 ENABLE_MOBILITY_CARRYOVER = True
 ENABLE_HOUSEHOLD_DRAWERS = True
 ENABLE_VA_WIZARD = True
-ENABLE_HOME_DECISION = True     # enabled
-ENABLE_HOME_MODS = True         # enabled
+ENABLE_HOME_DECISION = True
+ENABLE_HOME_MODS = True
 ENABLE_DETAILS_PAGE = True
-ENABLE_CHARTS = False           # keep False unless you want Altair pies
+ENABLE_CHARTS = False  # keep False unless Altair is desired
 
 # ---------- Optional charts dependency ----------
 try:
@@ -231,7 +231,7 @@ elif st.session_state.step == "planner":
     if mobility_q_idx is not None:
         st.session_state.mobility_raw[person["id"]] = answers.get(f"q{mobility_q_idx}")
 
-    # Conditional Q9 — only if severe cognition is already implied by earlier answers
+    # Conditional Q9 — only if severe cognition is implied
     conditional_answer = None
     cond_cfg = qa.get("conditional_questions")
     if cond_cfg:
@@ -413,12 +413,6 @@ elif st.session_state.step == "calculator":
                 setattr(inp, "in_home_days_per_month", int(days))
             except Exception:
                 pass
-            # Optional debug: add ?debug=1 to URL
-            try:
-                if st.query_params.get("debug") == "1":
-                    st.caption(f"DEBUG for {name}: {hours} hours/day, {days} days/month")
-            except Exception:
-                pass
 
         # Compute monthly cost
         try:
@@ -467,7 +461,6 @@ elif st.session_state.step == "household":
 
     vals = st.session_state.get("house_vals", {})
 
-    # Safe money helper (avoid reassigning widget keys in session_state)
     def money(label, key, default=0):
         v0 = int(vals.get(key, default) or 0)
         v = st.number_input(label, min_value=0, step=50, value=v0, key=key)
@@ -503,7 +496,7 @@ elif st.session_state.step == "household":
         oth = money("Other household income", "hh_other", 0)
         st.metric("Subtotal — Household income", f"${r+an+inv+tr+oth:,}")
 
-    # VA / LTC wizard
+    # VA / LTC wizard (unchanged)
     if ENABLE_VA_WIZARD:
         with st.expander("Benefits (VA, Long-Term Care insurance)", expanded=True):
             people_local = st.session_state.get("people", [])
@@ -605,7 +598,7 @@ elif st.session_state.step == "household":
             benefits_total = (a_va + (ltc_add if a_ltc == "Yes" else 0)) + (b_va + (ltc_add if b_ltc == "Yes" else 0))
             st.metric("Subtotal — Benefits (VA + LTC add-ons)", f"${benefits_total:,.0f}")
 
-    # Home decision
+    # Home decision (now with "apply proceeds to assets" toggle)
     if ENABLE_HOME_DECISION:
         with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=False):
             hd_choice = st.selectbox(
@@ -614,6 +607,8 @@ elif st.session_state.step == "household":
                 key="home_decision_choice",
                 help="This affects one-time proceeds and/or ongoing monthly costs."
             )
+
+            apply_to_assets = st.checkbox("Apply net proceeds to assets summary", value=True, key="home_apply_proceeds")
 
             home_monthly_total = 0
             home_proceeds = 0
@@ -666,9 +661,9 @@ elif st.session_state.step == "household":
 
             st.metric("Subtotal — Home monthly costs", f"${home_monthly_total:,.0f}")
             st.session_state["home_monthly_total"] = int(home_monthly_total)
-            st.session_state["home_net_proceeds"] = int(home_proceeds)
+            st.session_state["home_net_proceeds"] = int(home_proceeds if apply_to_assets else 0)
 
-    # Home modifications
+    # Home modifications (amortize vs upfront)
     if ENABLE_HOME_MODS:
         with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=False):
             st.caption("Select applicable projects. Costs are averages; scale by level and amortize over months.")
@@ -682,10 +677,24 @@ elif st.session_state.step == "household":
                 ("Lighting & fall-risk improvements", 1500),
                 ("Smart home monitoring/sensors", 1200),
             ]
+
+            pay_method = st.radio(
+                "Payment method",
+                ["Amortize monthly", "Pay upfront (one-time)"],
+                index=0,
+                key="mods_pay_method",
+                horizontal=True,
+                help="Amortize to see a monthly impact, or pay upfront to remove it from monthly costs."
+            )
+
             level = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1, key="mods_level",
                                  help="Budget ≈ 0.8×, Standard = 1.0×, Custom ≈ 1.4×")
             mult = {"Budget": 0.8, "Standard": 1.0, "Custom": 1.4}[level]
-            months = st.slider("Amortize over (months)", 12, 120, 60, 6, key="mods_amort")
+
+            if pay_method == "Amortize monthly":
+                months = st.slider("Amortize over (months)", 12, 120, 60, 6, key="mods_amort")
+            else:
+                months = 0
 
             total_capex = 0
             cols = st.columns(2)
@@ -695,9 +704,20 @@ elif st.session_state.step == "household":
                         qty = st.number_input("Qty", min_value=1, max_value=10, value=1, step=1, key=f"mod_{i}_qty")
                         total_capex += int(avg * mult * qty)
 
-            mods_monthly = int(round(total_capex / max(months, 1))) if total_capex else 0
-            st.metric("Subtotal — Home mods (amortized monthly)", f"${mods_monthly:,.0f}")
-            st.session_state["mods_monthly_total"] = int(mods_monthly)
+            # Deduct upfront from assets?
+            deduct_upfront = st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
+
+            if pay_method == "Amortize monthly":
+                mods_monthly = int(round(total_capex / max(months, 1))) if total_capex else 0
+                st.metric("Subtotal — Home mods (amortized monthly)", f"${mods_monthly:,.0f}")
+                st.session_state["mods_monthly_total"] = int(mods_monthly)
+                st.session_state["mods_upfront_total"] = 0
+            else:
+                st.metric("Upfront cost — Home mods", f"${total_capex:,.0f}")
+                st.caption("Monthly impact: $0 (paid upfront)")
+                st.session_state["mods_monthly_total"] = 0
+                st.session_state["mods_upfront_total"] = int(total_capex if deduct_upfront else 0)
+
             st.session_state["mods_capex_total"] = int(total_capex)
 
     # Assets — common
@@ -716,7 +736,7 @@ elif st.session_state.step == "household":
         st.metric("Subtotal — Common assets", f"${common_total:,.0f}")
         st.session_state["assets_common_total"] = common_total
 
-    # Assets — detailed/retirement/less common
+    # Assets — detailed
     with st.expander("Assets — detailed (retirement, annuities, etc.)", expanded=False):
         d1, d2, d3 = st.columns(3)
         with d1:
@@ -767,7 +787,7 @@ elif st.session_state.step == "breakdown":
     inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0)) if len(people) > 1 else 0
     inc_house = int(s.get("hh_rent", 0)) + int(s.get("hh_annuity", 0)) + int(s.get("hh_invest", 0)) + int(s.get("hh_trust", 0)) + int(s.get("hh_other", 0))
 
-    # Benefits (from VA wizard)
+    # Benefits
     va_A = int(s.get("a_va_monthly", 0))
     va_B = int(s.get("b_va_monthly", 0)) if len(people) > 1 else 0
 
@@ -777,10 +797,15 @@ elif st.session_state.step == "breakdown":
     other_monthly  = int(s.get("other_monthly_total", 0))
     addl_costs     = home_monthly + mods_monthly + other_monthly
 
-    # Assets
+    # One-time and assets
+    mods_upfront   = int(s.get("mods_upfront_total", 0))
+    home_proceeds  = int(s.get("home_net_proceeds", 0))
+
     assets_common  = int(s.get("assets_common_total", 0))
     assets_detail  = int(s.get("assets_detailed_total", 0))
-    assets_total   = assets_common + assets_detail
+
+    # Assets total: add home proceeds; subtract upfront mods (already stored as net upfront if deduct toggle was on)
+    assets_total   = max(assets_common + assets_detail + home_proceeds - mods_upfront, 0)
 
     # Totals
     income_total = inc_A + inc_B + inc_house + va_A + va_B
@@ -809,9 +834,10 @@ elif st.session_state.step == "breakdown":
         else:
             st.write(f"**{nameA}**: ${care_A:,.0f}/mo")
 
-    # Tables (clean numeric presentation)
+    # Tables
     try:
         import pandas as pd
+
         st.markdown("### Income breakdown")
         inc_df = pd.DataFrame([
             {"Category": "Individual A", "Amount": inc_A},
@@ -833,12 +859,34 @@ elif st.session_state.step == "breakdown":
         assets_df = pd.DataFrame([
             {"Category": "Common assets", "Amount": assets_common},
             {"Category": "Detailed assets", "Amount": assets_detail},
-            {"Category": "Total assets", "Amount": assets_total},
+            {"Category": "Home proceeds (one-time)", "Amount": home_proceeds},
+            {"Category": "Less upfront mods (one-time)", "Amount": -mods_upfront},
+            {"Category": "Total assets (net)", "Amount": assets_total},
         ])
         st.dataframe(assets_df, hide_index=True, use_container_width=True)
 
-        # Optional donuts
+        st.markdown("### One-time outlays")
+        one_rows = []
+        if mods_upfront > 0:
+            one_rows.append({"Item": "Home modifications (upfront)", "Amount": mods_upfront})
+        if one_rows:
+            one_df = pd.DataFrame(one_rows)
+            st.dataframe(one_df, hide_index=True, use_container_width=True)
+        else:
+            st.caption("No one-time outlays recorded.")
+    except Exception:
+        st.write("Table rendering failed; showing numeric summary:")
+        st.write({
+            "Income": {"A": inc_A, "B": inc_B, "Household": inc_house, "VA": va_A + va_B},
+            "Costs": {"Home": home_monthly, "Mods amortized": mods_monthly, "Other": other_monthly},
+            "Assets": {"Common": assets_common, "Detailed": assets_detail, "Home proceeds": home_proceeds,
+                       "Less upfront mods": -mods_upfront, "Total": assets_total},
+        })
+
+    # Optional donuts
+    try:
         if ENABLE_CHARTS and HAVE_ALTAIR:
+            import pandas as pd, altair as alt  # noqa
             if inc_df["Amount"].sum() > 0:
                 colA, colB = st.columns(2)
                 with colA:
@@ -849,38 +897,19 @@ elif st.session_state.step == "breakdown":
                         use_container_width=True
                     )
                 with colB:
-                    if (care_total + addl_costs) > 0:
-                        cost_df = pd.DataFrame([
-                            {"Category": "Care", "Amount": care_total},
-                            {"Category": "Home/Mods/Other", "Amount": addl_costs},
-                        ])
+                    comp_df = pd.DataFrame([
+                        {"Category": "Care", "Amount": care_total},
+                        {"Category": "Home/Mods/Other", "Amount": home_monthly + mods_monthly + other_monthly},
+                    ])
+                    if comp_df["Amount"].sum() > 0:
                         st.caption("Costs composition")
                         st.altair_chart(
-                            alt.Chart(cost_df).mark_arc(innerRadius=60).encode(
+                            alt.Chart(comp_df).mark_arc(innerRadius=60).encode(
                                 theta="Amount", color="Category", tooltip=["Category", "Amount"]),
                             use_container_width=True
                         )
     except Exception:
-        # Fallback plain tables
-        st.markdown("### Income breakdown")
-        st.table([
-            {"Category": "Individual A", "Amount": inc_A},
-            {"Category": "Individual B", "Amount": inc_B},
-            {"Category": "Household", "Amount": inc_house},
-            {"Category": "VA benefits", "Amount": va_A + va_B},
-        ])
-        st.markdown("### Additional monthly costs")
-        st.table([
-            {"Category": "Home (carry, taxes, fees)", "Amount": home_monthly},
-            {"Category": "Home modifications (amortized)", "Amount": mods_monthly},
-            {"Category": "Other recurring", "Amount": other_monthly},
-        ])
-        st.markdown("### Assets summary")
-        st.table([
-            {"Category": "Common assets", "Amount": assets_common},
-            {"Category": "Detailed assets", "Amount": assets_detail},
-            {"Category": "Total assets", "Amount": assets_total},
-        ])
+        pass
 
     st.divider()
     b1, b2 = st.columns(2)
