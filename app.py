@@ -1,18 +1,27 @@
 # app.py — Senior Navigator (Planner → Recommendation → Costs → Household → Breakdown)
-# Stable build with: VA/LTC wizard, Home Decision math to assets, Home Mods upfront/amortize,
-# One-time outlays table, conditional Q9, in-home days slider wired.
-# CHANGES IN THIS FILE ONLY:
-# 1) Home(Keep): HOA + Utilities included in monthly subtotal
-# 2) Home Mods: layout cleanup, payment choice moved to bottom
-# 3) New drawer: "Other monthly costs" → other_monthly_total
+# Mobile-focused UX: one-question-at-a-time wizard, horizontal buttons, top-scroll on step change.
+# Business logic lives in engines.py and JSON under ./data; this file handles UI/flow only.
 
 from pathlib import Path
 from types import SimpleNamespace
 import traceback
+
 import streamlit as st
 
 # ---------- Page config ----------
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
+
+# Subtle mobile spacing/legibility tweaks
+st.markdown("""
+<style>
+@media (max-width: 480px){
+  .block-container { padding-top: 0.75rem; padding-bottom: 4rem; }
+  .stButton>button { padding:.75rem 1rem; border-radius:.5rem; }
+  .stRadio > div{ gap:.5rem !important; }
+  label { font-size: 1rem !important; }
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------- Feature flags ----------
 ENABLE_PARTNER_INTERSTITIAL = True
@@ -23,8 +32,9 @@ ENABLE_HOUSEHOLD_DRAWERS = True
 ENABLE_VA_WIZARD = True
 ENABLE_HOME_DECISION = True
 ENABLE_HOME_MODS = True
+ENABLE_OTHER_MONTHLIES = True
 ENABLE_DETAILS_PAGE = True
-ENABLE_CHARTS = False  # keep False unless Altair + charts desired
+ENABLE_CHARTS = True  # Altair optional; auto-disables if not installed
 
 # ---------- Optional charts dependency ----------
 try:
@@ -41,7 +51,7 @@ REC_PATH = DATA_DIR / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
 # ---------- Engines ----------
 try:
-    from engines import PlannerEngine, CalculatorEngine, CalcInputs
+    from engines import PlannerEngine, CalculatorEngine, CalcInputs  # CalcInputs is optional
 except Exception:
     st.error("Failed to import engines.py. See traceback:")
     st.code(traceback.format_exc())
@@ -87,18 +97,35 @@ def reset_all():
             del st.session_state[k]
     st.session_state.step = "intro"
 
-def answers_trigger_flag(qa_json: dict, answers: dict, target_flag: str) -> bool:
-    """Return True if any answer would set target_flag per QA triggers."""
-    for idx, q in enumerate(qa_json.get("questions", []), start=1):
-        sel = answers.get(f"q{idx}")
-        if sel is None:
-            continue
-        trig = q.get("trigger") or {}
-        for rules in trig.values():
-            for rule in rules:
-                if int(rule.get("answer", -999)) == int(sel) and rule.get("flag") == target_flag:
-                    return True
-    return False
+# ---------- Mobile UX helpers ----------
+def jump_to_top():
+    """Scroll to top on next render if a previous handler set _jump_top."""
+    if st.session_state.pop("_jump_top", False):
+        st.markdown(
+            "<script>window.scrollTo({top: 0, behavior: 'instant'});</script>",
+            unsafe_allow_html=True,
+        )
+
+def row_buttons(*buttons):
+    """
+    Render a row of buttons that stay horizontal on mobile (best-effort).
+    Usage:
+      clicks = row_buttons(
+        ("Back", "back_key"),
+        ("Next", "next_key", True)   # True marks primary
+      )
+      if clicks["back_key"]: ...
+    """
+    n = max(1, len(buttons))
+    cols = st.columns(n)
+    clicks = {}
+    for col, spec in zip(cols, buttons):
+        label, key = spec[0], spec[1]
+        primary = bool(spec[2]) if len(spec) > 2 else False
+        with col:
+            clicks[key] = st.button(label, key=key, use_container_width=True,
+                                    type=("primary" if primary else "secondary"))
+    return clicks
 
 # ---------- Session init ----------
 if "step" not in st.session_state:
@@ -130,6 +157,7 @@ This tool breaks it down into clear steps.
 
 # ---------- Audience ----------
 elif st.session_state.step == "audience":
+    jump_to_top()
     st.header("Who is this plan for?")
     role = st.radio("Select one:", ["Myself", "My spouse/partner", "My parent", "Both parents", "Someone else"])
 
@@ -137,24 +165,28 @@ elif st.session_state.step == "audience":
     if role == "Both parents":
         c1, c2 = st.columns(2)
         with c1:
-            n1 = st.text_input("Parent 1 name", value="Mom", key="p1_name")
+            p1_val = st.session_state.get("p1_name", "")
+            n1 = st.text_input("Parent 1 name", value=p1_val, placeholder="e.g., Mom", key="p1_name")
             st.selectbox("Parent 1 age", ["65–74", "75–84", "85+"], key="p1_age")
         with c2:
-            n2 = st.text_input("Parent 2 name", value="Dad", key="p2_name")
+            p2_val = st.session_state.get("p2_name", "")
+            n2 = st.text_input("Parent 2 name", value=p2_val, placeholder="e.g., Dad", key="p2_name")
             st.selectbox("Parent 2 age", ["65–74", "75–84", "85+"], key="p2_age")
         people = [
-            {"id": "A", "display_name": n1, "relationship": "parent"},
-            {"id": "B", "display_name": n2, "relationship": "parent"},
+            {"id": "A", "display_name": n1 or "Parent 1", "relationship": "parent"},
+            {"id": "B", "display_name": n2 or "Parent 2", "relationship": "parent"},
         ]
     else:
-        default = "Alex" if role != "My parent" else "Mom"
-        n = st.text_input("Name", value=default, key="p_name")
+        placeholder_map = {"Myself": "e.g., Alex", "My spouse/partner": "e.g., Pat", "My parent": "e.g., Mom", "Someone else": "e.g., Aunt Jean"}
+        ph = placeholder_map.get(role, "e.g., Alex")
+        p_val = st.session_state.get("p_name", "")
+        n = st.text_input("Name", value=p_val, placeholder=ph, key="p_name")
         st.selectbox("Approximate age", ["65–74", "75–84", "85+"], key="p_age")
         map_rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}
-        people = [{"id": "A", "display_name": n, "relationship": map_rel.get(role, "other")}]
+        people = [{"id": "A", "display_name": n or "Alex", "relationship": map_rel.get(role, "other")}]
 
     st.caption("Next, we’ll ask short care questions for each person.")
-    if st.button("Continue"):
+    if row_buttons(("Continue", "aud_continue", True))["aud_continue"]:
         st.session_state.people = people
         st.session_state.current_person = 0
         st.session_state.answers = {}
@@ -162,11 +194,14 @@ elif st.session_state.step == "audience":
         st.session_state.mobility_raw = {}
         st.session_state.care_overrides = {}
         st.session_state.person_costs = {}
+        st.session_state.wizard_state = {}
         st.session_state.step = "partner_context" if ENABLE_PARTNER_INTERSTITIAL else "planner"
+        st.session_state["_jump_top"] = True
         st.rerun()
 
 # ---------- Partner interstitial ----------
 elif st.session_state.step == "partner_context":
+    jump_to_top()
     people = st.session_state.get("people", [])
     single = len(people) == 1
     primary = people[0]["display_name"] if people else "Person A"
@@ -180,96 +215,90 @@ You can include a simple support plan for them now so the household picture is c
     if single:
         add = st.checkbox("Also include a support plan for the spouse/partner", value=False, key="care_partner_add")
         if add:
-            st.text_input("Spouse/partner name", value="Spouse/Partner", key="care_partner_name")
+            st.text_input("Spouse/partner name", value=st.session_state.get("care_partner_name", ""), placeholder="e.g., Pat", key="care_partner_name")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Skip, start care questions"):
-            st.session_state.step = "planner"
-            st.rerun()
-    with c2:
-        if st.button("Add spouse/partner and continue"):
-            if single and st.session_state.get("care_partner_add"):
-                st.session_state.people.append({
-                    "id": "B",
-                    "display_name": st.session_state.get("care_partner_name") or "Spouse/Partner",
-                    "relationship": "spouse"
-                })
-            st.session_state.step = "planner"
-            st.rerun()
+    clicks = row_buttons(("Skip, start care questions", "pc_skip"),
+                         ("Add spouse/partner and continue", "pc_add", True))
+    if clicks["pc_skip"]:
+        st.session_state.step = "planner"
+        st.session_state["_jump_top"] = True
+        st.rerun()
+    if clicks["pc_add"]:
+        if single and st.session_state.get("care_partner_add"):
+            st.session_state.people.append({
+                "id": "B",
+                "display_name": st.session_state.get("care_partner_name") or "Spouse/Partner",
+                "relationship": "spouse"
+            })
+        st.session_state.step = "planner"
+        st.session_state["_jump_top"] = True
+        st.rerun()
 
-# ---------- Planner (Q&A) ----------
+# ---------- Planner (Q&A) — mobile wizard (one-at-a-time); desktop toggle shows all ----------
 elif st.session_state.step == "planner":
+    jump_to_top()
+
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
     if not people:
         reset_all(); st.rerun()
+
     person = people[i]
+    pid = person["id"]
     name = person["display_name"]
 
-    st.header(f"Care Plan Questions for {name}")
+    st.header(f"Care Plan — {name}")
     st.caption(f"Person {i+1} of {len(people)}")
 
     qa = planner.qa or {}
-    answers = st.session_state.answers.get(person["id"], {})
+    questions = qa.get("questions", [])
+    answers = st.session_state.answers.get(pid, {})
 
-    mobility_q_idx = None
-    for idx, q in enumerate(qa.get("questions", []), start=1):
-        if "mobility" in q.get("question", "").lower():
-            mobility_q_idx = idx
+    # Wizard state for this person
+    ws = st.session_state.wizard_state.setdefault(pid, {"idx": 0})
 
-        prev = answers.get(f"q{idx}")
+    # Desktop toggle (for reviewers)
+    desktop_show_all = st.toggle("Show all questions (desktop reviewers)", value=False,
+                                 help="Mobile users get one question at a time for readability.")
+
+    def render_q(idx: int):
+        q = questions[idx]
+        qnum = idx + 1
         opts_map = q.get("answers", {})
         ordered_keys = [str(n) for n in sorted(map(int, opts_map.keys()))]
-        label = f"{q.get('question', f'Question {idx}')} (for {name})"
-        sel_label = st.radio(
-            label,
-            options=[opts_map[k] for k in ordered_keys],
-            index=(ordered_keys.index(str(prev)) if prev in ordered_keys else 0),
-            key=f"{person['id']}_q{idx}",
-            help=q.get("help")
-        )
-        sel_key = ordered_keys[[opts_map[k] for k in ordered_keys].index(sel_label)]
-        answers[f"q{idx}"] = int(sel_key)
+        prev_key = str(answers.get(f"q{qnum}", ordered_keys[0]))
+        opts = [opts_map[k] for k in ordered_keys]
+        label = q.get("question", f"Question {qnum}")
+        help_txt = q.get("help", None)
+        curr_idx = ordered_keys.index(prev_key) if prev_key in ordered_keys else 0
+        sel = st.radio(label, options=opts, index=curr_idx, help=help_txt, key=f"{pid}_q{qnum}_wiz")
+        sel_key = ordered_keys[opts.index(sel)]
+        answers[f"q{qnum}"] = int(sel_key)
+        # mobility capture for carryover
+        if "mobility" in label.lower():
+            st.session_state.setdefault("mobility_raw", {}).update({pid: int(sel_key)})
 
-    if mobility_q_idx is not None:
-        st.session_state.mobility_raw[person["id"]] = answers.get(f"q{mobility_q_idx}")
+    if desktop_show_all:
+        for idx in range(len(questions)):
+            render_q(idx)
+        st.session_state.answers[pid] = answers
 
-    # Conditional Q9 — only if severe cognition is implied
-    conditional_answer = None
-    cond_cfg = qa.get("conditional_questions")
-    if cond_cfg:
-        cq = cond_cfg[0]
-        prereq_flag = cq.get("trigger") or "severe_cognitive_decline"
-        show_conditional = answers_trigger_flag(qa, answers, prereq_flag)
-        if show_conditional:
-            label = cq.get("question", "Additional question")
-            answers_map = cq.get("answers", {"1": "Yes", "2": "No"})
-            ordered_ckeys = [str(n) for n in sorted(map(int, answers_map.keys()))]
-            sel = st.radio(label, options=[answers_map[k] for k in ordered_ckeys], key=f"{person['id']}_cond")
-            for k, v in answers_map.items():
-                if v == sel:
-                    conditional_answer = k
-                    break
-
-    st.session_state.answers[person["id"]] = answers
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Back"):
+        clicks = row_buttons(("Back", "plan_back_all"),
+                             ("Next", "plan_next_all", True))
+        if clicks["plan_back_all"]:
             if i == 0:
                 st.session_state.step = "partner_context" if ENABLE_PARTNER_INTERSTITIAL else "audience"
             else:
                 st.session_state.current_person = i - 1
+            st.session_state["_jump_top"] = True
             st.rerun()
-    with c2:
-        if st.button("Next"):
+
+        if clicks["plan_next_all"]:
             try:
-                res = planner.run(answers, conditional_answer=conditional_answer)
+                res = planner.run(answers)
             except Exception:
                 st.error("PlannerEngine.run failed.")
-                st.code(traceback.format_exc())
-                st.stop()
+                st.code(traceback.format_exc()); st.stop()
 
             care_type = (getattr(res, "care_type", None) or res.get("care_type") or "in_home")
             flags = getattr(res, "flags", None) or set(res.get("flags", []))
@@ -277,7 +306,7 @@ elif st.session_state.step == "planner":
             reasons = getattr(res, "reasons", None) or res.get("reasons", [])
             advisory = getattr(res, "advisory", None) or res.get("advisory")
 
-            st.session_state.planner_results[person["id"]] = {
+            st.session_state.planner_results[pid] = {
                 "care_type": care_type,
                 "flags": set(flags),
                 "scores": scores,
@@ -287,13 +316,79 @@ elif st.session_state.step == "planner":
 
             if i + 1 < len(people):
                 st.session_state.current_person = i + 1
+                st.session_state["_jump_top"] = True
                 st.rerun()
             else:
                 st.session_state.step = "recommendations"
+                st.session_state["_jump_top"] = True
                 st.rerun()
+    else:
+        total_q = len(questions)
+        idx = int(ws.get("idx", 0))
+        idx = max(0, min(idx, total_q - 1))
+        ws["idx"] = idx
+
+        st.progress((idx + 1) / total_q, text=f"Question {idx+1} of {total_q}")
+        render_q(idx)
+        st.session_state.answers[pid] = answers
+
+        left_label = "Back" if idx > 0 else ("Back to start" if i == 0 else "Back")
+        right_label = "Next" if idx + 1 < total_q else "Finish"
+        clicks = row_buttons((left_label, "wiz_back"),
+                             (right_label, "wiz_next", True))
+
+        if clicks["wiz_back"]:
+            if idx > 0:
+                ws["idx"] = idx - 1
+            else:
+                if i == 0:
+                    st.session_state.step = "partner_context" if ENABLE_PARTNER_INTERSTITIAL else "audience"
+                else:
+                    st.session_state.current_person = i - 1
+                    prev_pid = people[i-1]["id"]
+                    st.session_state.wizard_state.setdefault(prev_pid, {"idx": total_q - 1})
+                st.session_state["_jump_top"] = True
+            st.rerun()
+
+        if clicks["wiz_next"]:
+            if idx + 1 < total_q:
+                ws["idx"] = idx + 1
+                st.rerun()
+            else:
+                try:
+                    res = planner.run(answers)
+                except Exception:
+                    st.error("PlannerEngine.run failed.")
+                    st.code(traceback.format_exc()); st.stop()
+
+                care_type = (getattr(res, "care_type", None) or res.get("care_type") or "in_home")
+                flags = getattr(res, "flags", None) or set(res.get("flags", []))
+                scores = getattr(res, "scores", None) or res.get("scores", {})
+                reasons = getattr(res, "reasons", None) or res.get("reasons", [])
+                advisory = getattr(res, "advisory", None) or res.get("advisory")
+
+                st.session_state.planner_results[pid] = {
+                    "care_type": care_type,
+                    "flags": set(flags),
+                    "scores": scores,
+                    "reasons": reasons,
+                    "advisory": advisory
+                }
+
+                if i + 1 < len(people):
+                    st.session_state.current_person = i + 1
+                    next_pid = people[i+1]["id"]
+                    st.session_state.wizard_state.setdefault(next_pid, {"idx": 0})
+                    st.session_state["_jump_top"] = True
+                    st.rerun()
+                else:
+                    st.session_state.step = "recommendations"
+                    st.session_state["_jump_top"] = True
+                    st.rerun()
 
 # ---------- Recommendations + override ----------
 elif st.session_state.step == "recommendations":
+    jump_to_top()
     st.header("Our Recommendation")
     st.caption("Start with the recommended scenario, or switch without redoing questions.")
 
@@ -301,7 +396,7 @@ elif st.session_state.step == "recommendations":
         rec = st.session_state.planner_results.get(p["id"], {})
         default = rec.get("care_type", "in_home")
         st.subheader(f"{p['display_name']}: {default.replace('_', ' ').title()} (recommended)")
-        for r in rec.get("reasons", []):
+        for r in rec.get("reasons", []) or []:
             st.write("• " + str(r))
         if rec.get("advisory"):
             st.info(rec["advisory"])
@@ -322,12 +417,20 @@ elif st.session_state.step == "recommendations":
 
         st.divider()
 
-    if st.button("See Costs"):
+    clicks = row_buttons(("Back to audience", "rec_back"),
+                         ("See Costs", "rec_next", True))
+    if clicks["rec_back"]:
+        st.session_state.step = "audience"
+        st.session_state["_jump_top"] = True
+        st.rerun()
+    if clicks["rec_next"]:
         st.session_state.step = "calculator"
+        st.session_state["_jump_top"] = True
         st.rerun()
 
 # ---------- Calculator ----------
 elif st.session_state.step == "calculator":
+    jump_to_top()
     st.header("Cost Planner")
 
     state = st.selectbox("Location", ["National", "Washington", "California", "Texas", "Florida"],
@@ -439,22 +542,20 @@ elif st.session_state.step == "calculator":
     st.session_state.combined_monthly_cost = total
     st.metric("Estimated Combined Monthly Cost", f"${total:,.0f}")
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("Back to recommendations"):
-            st.session_state.step = "recommendations"
-            st.rerun()
-    with c2:
-        if st.button("Add Household & Assets (optional)"):
-            st.session_state.step = "household"
-            st.rerun()
-    with c3:
-        if ENABLE_DETAILS_PAGE and st.button("View Detailed Breakdown"):
-            st.session_state.step = "breakdown"
-            st.rerun()
+    clicks = row_buttons(("Back to recommendations", "calc_back"),
+                         ("Add Household & Assets", "calc_house", True))
+    if clicks["calc_back"]:
+        st.session_state.step = "recommendations"
+        st.session_state["_jump_top"] = True
+        st.rerun()
+    if clicks["calc_house"]:
+        st.session_state.step = "household"
+        st.session_state["_jump_top"] = True
+        st.rerun()
 
 # ---------- Household (drawers) ----------
 elif st.session_state.step == "household":
+    jump_to_top()
     people = st.session_state.get("people", [])
     names = [p["display_name"] for p in people]
     nameA = names[0] if names else "Person A"
@@ -466,9 +567,10 @@ elif st.session_state.step == "household":
     vals = st.session_state.get("house_vals", {})
 
     def money(label, key, default=0):
-        v0 = int(vals.get(key, default) or 0)
+        v0 = int(vals.get(key, default) or st.session_state.get(key, default) or 0)
         v = st.number_input(label, min_value=0, step=50, value=v0, key=key)
         try:
+            st.session_state[key] = int(v)
             return int(v)
         except Exception:
             return 0
@@ -500,13 +602,13 @@ elif st.session_state.step == "household":
         oth = money("Other household income", "hh_other", 0)
         st.metric("Subtotal — Household income", f"${r+an+inv+tr+oth:,}")
 
-    # VA / LTC wizard (unchanged)
+    # VA / LTC wizard
     if ENABLE_VA_WIZARD:
         with st.expander("Benefits (VA, Long-Term Care insurance)", expanded=True):
             people_local = st.session_state.get("people", [])
             names_local = [p["display_name"] for p in people_local]
             nA = names_local[0] if names_local else "Person A"
-            nB = names_local[1] if len(names_local) > 1 else "Person B"
+            nB = names_local[1] if len(people_local) > 1 else "Person B"
 
             settings = getattr(calculator, "settings", {}) or {}
             if "va_mapr_2025" not in settings:
@@ -581,7 +683,7 @@ elif st.session_state.step == "household":
                 if len(people_local) > 1:
                     b_res = va_block("b", nB)
                 else:
-                    st.write(""); st.write("")
+                    st.write("")
                     b_res = {"monthly": 0, "detail": "No VA pension"}
 
             lc1, lc2 = st.columns(2)
@@ -602,181 +704,151 @@ elif st.session_state.step == "household":
             benefits_total = (a_va + (ltc_add if a_ltc == "Yes" else 0)) + (b_va + (ltc_add if b_ltc == "Yes" else 0))
             st.metric("Subtotal — Benefits (VA + LTC add-ons)", f"${benefits_total:,.0f}")
 
-    # Home decision (Keep now includes HOA + Utilities)
+    # Home decision drawer (keep/sell/HELOC/reverse); includes HOA and utilities; proceeds option
     if ENABLE_HOME_DECISION:
-        with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=False):
-            hd_choice = st.selectbox(
-                "What do you plan to do with the home?",
-                ["Keep", "Sell", "HELOC", "Reverse mortgage"],
-                key="home_decision_choice",
-                help="This affects one-time proceeds and/or ongoing monthly costs."
-            )
+        with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=True):
+            plan = st.selectbox("What do you plan to do with the home?",
+                                ["Keep", "Sell", "HELOC", "Reverse mortgage"], key="home_plan",
+                                help="This helps us include monthly home costs or proceeds appropriately.")
 
-            apply_to_assets = st.checkbox("Apply net proceeds to assets summary", value=True, key="home_apply_proceeds")
+            apply_proceeds = st.checkbox("Apply net proceeds to assets summary", value=True, key="home_apply_proceeds")
 
-            home_monthly_total = 0
-            home_proceeds = 0
+            monthly_home_costs = 0
+            proceeds = 0
 
-            if hd_choice == "Keep":
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    mort = st.number_input("Monthly mortgage/HELOC payment", min_value=0, step=50, key="home_keep_mort")
-                with col2:
-                    tax = st.number_input("Monthly property taxes", min_value=0, step=25, key="home_keep_tax")
-                with col3:
-                    ins = st.number_input("Monthly homeowners insurance", min_value=0, step=25, key="home_keep_ins")
+            if plan == "Keep":
+                m_mort = money("Monthly mortgage/HELOC payment", "home_keep_mort", 0)
+                m_tax  = money("Monthly property taxes", "home_keep_tax", 0)
+                m_ins  = money("Monthly homeowners insurance", "home_keep_ins", 0)
+                m_hoa  = money("Monthly HOA/maintenance", "home_keep_hoa", 0)
+                m_util = money("Monthly utilities (avg.)", "home_keep_util", 0)
+                monthly_home_costs = m_mort + m_tax + m_ins + m_hoa + m_util
 
-                c4, c5 = st.columns(2)
-                with c4:
-                    hoa = st.number_input("HOA/maintenance fee (monthly)", min_value=0, step=25, key="home_keep_hoa",
-                                          help="Condo/HOA dues or routine maintenance set-aside.")
-                with c5:
-                    utils = st.number_input("Average monthly utilities", min_value=0, step=25, key="home_keep_utils",
-                                            help="Electric, gas, water, trash, internet.")
+            elif plan == "Sell":
+                sale_price = money("Estimated sale price", "home_sell_price", 0)
+                payoff     = money("Principal payoff at sale", "home_sell_payoff", 0)
+                fee_pct    = st.slider("Typical fees (realtor/closing) — percent", 0.0, 10.0, 6.0, 0.25, key="home_sell_fee_pct")
+                fees_abs   = round(sale_price * (fee_pct/100.0))
+                proceeds   = max(sale_price - payoff - fees_abs, 0)
+                st.caption(f"Estimated net proceeds: **${proceeds:,.0f}** (fees about ${fees_abs:,.0f})")
 
-                home_monthly_total = int(mort + tax + ins + hoa + utils)
+            elif plan == "HELOC":
+                m_heloc = money("Monthly HELOC payment", "home_heloc_pay", 0)
+                m_tax   = money("Monthly property taxes", "home_heloc_tax", 0)
+                m_ins   = money("Monthly homeowners insurance", "home_heloc_ins", 0)
+                m_hoa   = money("Monthly HOA/maintenance", "home_heloc_hoa", 0)
+                m_util  = money("Monthly utilities (avg.)", "home_heloc_util", 0)
+                monthly_home_costs = m_heloc + m_tax + m_ins + m_hoa + m_util
 
-            elif hd_choice == "Sell":
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    val = st.number_input("Estimated sale price", min_value=0, step=1000, key="home_sell_val")
-                with col2:
-                    payoff = st.number_input("Principal payoff at sale", min_value=0, step=1000, key="home_sell_payoff")
-                with col3:
-                    fee_pct = st.slider("Typical fees (realtor/closing)", 0.0, 10.0, 7.0, 0.5, key="home_sell_fees")
-                fees = val * (fee_pct / 100.0)
-                home_proceeds = max(int(val - payoff - fees), 0)
-                st.caption(f"Estimated net proceeds: **${home_proceeds:,.0f}**")
-                home_monthly_total = 0
+            elif plan == "Reverse mortgage":
+                m_tax   = money("Monthly property taxes", "home_rev_tax", 0)
+                m_ins   = money("Monthly homeowners insurance", "home_rev_ins", 0)
+                m_hoa   = money("Monthly HOA/maintenance", "home_rev_hoa", 0)
+                m_util  = money("Monthly utilities (avg.)", "home_rev_util", 0)
+                monthly_home_costs = m_tax + m_ins + m_hoa + m_util
 
-            elif hd_choice == "HELOC":
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    draw = st.number_input("HELOC draw (cash out)", min_value=0, step=1000, key="home_heloc_draw")
-                with col2:
-                    rate = st.number_input("Interest rate (APR %)", min_value=0.0, step=0.25, value=8.0, key="home_heloc_rate")
-                with col3:
-                    term = st.number_input("Term (years)", min_value=1, step=1, value=10, key="home_heloc_term")
-                r = (rate / 100.0) / 12.0
-                n = int(term * 12)
-                pmt = int(draw * (r * (1 + r) ** n) / ((1 + r) ** n - 1)) if draw and r > 0 else int(draw / max(n, 1))
-                home_monthly_total = max(pmt, 0)
-                home_proceeds = int(draw)
+            st.metric("Subtotal — Home monthly costs", f"${monthly_home_costs:,.0f}")
+            st.session_state["home_monthly_total"] = monthly_home_costs
+            st.session_state["home_sale_proceeds"] = proceeds if apply_proceeds else 0
+            st.session_state["home_apply_proceeds"] = apply_proceeds
 
-            elif hd_choice == "Reverse mortgage":
-                col1, col2 = st.columns(2)
-                with col1:
-                    advance = st.number_input("Estimated upfront advance", min_value=0, step=1000, key="home_rev_advance")
-                with col2:
-                    fees = st.number_input("Upfront fees/closing costs", min_value=0, step=500, key="home_rev_fees")
-                home_proceeds = max(int(advance - fees), 0)
-                home_monthly_total = 0
-
-            st.metric("Subtotal — Home monthly costs", f"${home_monthly_total:,.0f}")
-            st.session_state["home_monthly_total"] = int(home_monthly_total)
-            st.session_state["home_net_proceeds"] = int(home_proceeds if apply_to_assets else 0)
-
-    # Home modifications (layout cleaned; payment choice moved to bottom)
+    # Home modifications (with finish level, selectable items, amortize vs upfront)
     if ENABLE_HOME_MODS:
-        with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=False):
-            st.caption("Select applicable projects. Costs are averages; choose finish level, select work, then pick how to pay.")
+        with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=True):
+            # catalog costs
+            BASE = {
+                "Grab bars & railings": 800,
+                "Widen doorways": 2500,
+                "Ramp installation": 3500,
+                "Bathroom walk-in shower conversion": 12000,
+                "Stair lift": 4500,
+                "Smart home monitoring/sensors": 1200,
+                "Lighting & fall-risk improvements": 1500,
+            }
+            level = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1,
+                                 help="Budget uses basic fixtures/materials; Custom uses premium finishes.", key="mods_level")
+            level_mult = {"Budget": 0.85, "Standard": 1.0, "Custom": 1.25}[level]
 
-            # Finish level first
-            level = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1, key="mods_level",
-                                 help="Budget ≈ 0.8×, Standard = 1.0×, Custom ≈ 1.4×")
-            mult = {"Budget": 0.8, "Standard": 1.0, "Custom": 1.4}[level]
+            # selections in two columns
+            left, right = st.columns(2)
+            sel = {}
+            qty = {}
 
-            # Compact two-column checklist with inline qty
-            projects = [
-                ("Grab bars & railings", 800),
-                ("Widen doorways", 2500),
-                ("Ramp installation", 3500),
-                ("Bathroom walk-in shower conversion", 12000),
-                ("Stair lift", 4500),
-                ("Lighting & fall-risk improvements", 1500),
-                ("Smart home monitoring/sensors", 1200),
-            ]
-            total_capex = 0
-            cols = st.columns(2)
-            for i, (label, avg) in enumerate(projects):
-                with cols[i % 2]:
-                    row = st.columns([0.08, 0.62, 0.30])  # [checkbox, label, qty]
-                    with row[0]:
-                        selected = st.checkbox("", key=f"mod_{i}")
-                    with row[1]:
-                        st.write(f"**{label}** · avg ${avg:,}")
-                    with row[2]:
-                        qty = st.number_input("Qty", min_value=1, max_value=10, value=1, step=1,
-                                              key=f"mod_{i}_qty", label_visibility="collapsed")
-                    if selected:
-                        total_capex += int(avg * mult * qty)
+            def item(row, label, keybase, default_checked=False, default_qty=1):
+                with row:
+                    sel[keybase] = st.checkbox(f"{label} (avg ${BASE[label]:,})", value=default_checked, key=f"chk_{keybase}")
+                    qty[keybase] = st.number_input("Qty", min_value=1, step=1, value=default_qty, key=f"qty_{keybase}") if sel[keybase] else 0
 
-            # Payment method at the bottom near totals
-            st.divider()
-            pay_method = st.radio(
-                "Payment method",
-                ["Amortize monthly", "Pay upfront (one-time)"],
-                index=0,
-                key="mods_pay_method",
-                horizontal=True,
-                help="Amortize to see a monthly impact, or pay upfront to remove it from monthly costs."
-            )
+            item(left,  "Grab bars & railings", "bars", True, 2)
+            item(right, "Widen doorways", "door", False, 1)
+            item(left,  "Ramp installation", "ramp", False, 1)
+            item(right, "Bathroom walk-in shower conversion", "bath", True, 1)
+            item(left,  "Stair lift", "stair", False, 1)
+            item(left,  "Smart home monitoring/sensors", "smart", False, 1)
+            item(right, "Lighting & fall-risk improvements", "light", False, 1)
+
+            # cost calc
+            upfront_raw = 0
+            mapping = {
+                "bars": "Grab bars & railings",
+                "door": "Widen doorways",
+                "ramp": "Ramp installation",
+                "bath": "Bathroom walk-in shower conversion",
+                "stair": "Stair lift",
+                "smart": "Smart home monitoring/sensors",
+                "light": "Lighting & fall-risk improvements",
+            }
+            for k, checked in sel.items():
+                if checked:
+                    unit = BASE[mapping[k]]
+                    upfront_raw += int(round(unit * level_mult) * qty.get(k, 0))
+
+            pay_method = st.radio("Payment method", ["Amortize monthly", "Pay upfront (one-time)"], index=0, key="mods_pay_method")
+            months = st.slider("Amortize over (months)", 6, 60, 12, 1, key="mods_months") if pay_method == "Amortize monthly" else 0
+
+            deduct_assets = st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
+
             if pay_method == "Amortize monthly":
-                months = st.slider("Amortize over (months)", 12, 120, 60, 6, key="mods_amort")
-            else:
-                months = 0
-
-            deduct_upfront = st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
-
-            if pay_method == "Amortize monthly":
-                mods_monthly = int(round(total_capex / max(months, 1))) if total_capex else 0
-                st.metric("Subtotal — Home mods (amortized monthly)", f"${mods_monthly:,.0f}")
-                st.session_state["mods_monthly_total"] = int(mods_monthly)
+                monthly_mods = int(round(upfront_raw / max(months, 1)))
+                st.metric("Subtotal — Home mods (amortized monthly)", f"${monthly_mods:,.0f}")
+                st.caption(f"Upfront estimated: ${upfront_raw:,.0f} amortized over {months} months")
+                st.session_state["mods_monthly_total"] = monthly_mods
                 st.session_state["mods_upfront_total"] = 0
             else:
-                st.metric("Upfront cost — Home mods", f"${total_capex:,.0f}")
+                st.metric("Upfront cost — Home mods", f"${upfront_raw:,.0f}")
                 st.caption("Monthly impact: $0 (paid upfront)")
                 st.session_state["mods_monthly_total"] = 0
-                st.session_state["mods_upfront_total"] = int(total_capex if deduct_upfront else 0)
+                st.session_state["mods_upfront_total"] = upfront_raw if deduct_assets else 0
+            st.session_state["mods_deduct_assets"] = deduct_assets
 
-            st.session_state["mods_capex_total"] = int(total_capex)
-
-    # Other monthly costs (new drawer)
-    with st.expander("Other monthly costs (medical & living)", expanded=False):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            meds = st.number_input("Medications (monthly)", min_value=0, step=25, key="omc_meds")
-            health = st.number_input("Health insurance / Medicare*", min_value=0, step=25, key="omc_health",
-                                     help="Medicare premiums, supplemental, Part D, Advantage, etc.")
-        with c2:
-            dental = st.number_input("Dental insurance", min_value=0, step=25, key="omc_dental")
-            transport = st.number_input("Transportation", min_value=0, step=25, key="omc_transport",
-                                        help="Fuel, rideshare, paratransit, etc.")
-        with c3:
-            food = st.number_input("Groceries / meals", min_value=0, step=25, key="omc_food")
-            misc = st.number_input("Other recurring", min_value=0, step=25, key="omc_misc")
-
-        other_monthly_total = int(meds + health + dental + transport + food + misc)
-        st.metric("Subtotal — Other monthly costs", f"${other_monthly_total:,.0f}")
-        st.session_state["other_monthly_total"] = other_monthly_total
+    # Other monthly recurring costs
+    if ENABLE_OTHER_MONTHLIES:
+        with st.expander("Other monthly costs (health, medications, transportation, etc.)", expanded=False):
+            meds   = money("Prescription medications", "om_meds", 0)
+            medic  = money("Medicare/health insurance premiums", "om_medic", 0)
+            dental = money("Dental insurance", "om_dental", 0)
+            transp = money("Transportation", "om_transp", 0)
+            food   = money("Groceries & meals", "om_food", 0)
+            other  = money("Other recurring", "om_other", 0)
+            other_monthly_total = meds + medic + dental + transp + food + other
+            st.metric("Subtotal — Other recurring costs", f"${other_monthly_total:,.0f}")
+            st.session_state["other_monthly_total"] = other_monthly_total
 
     st.divider()
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("Back to Costs"):
-            st.session_state.step = "calculator"
-            st.rerun()
-    with c2:
-        if ENABLE_DETAILS_PAGE and st.button("View Detailed Breakdown"):
-            st.session_state.step = "breakdown"
-            st.rerun()
-    with c3:
-        if st.button("Finish"):
-            st.session_state.step = "intro"
-            st.rerun()
+    clicks = row_buttons(("Back to Costs", "hh_back"),
+                         ("Finish & View Breakdown", "hh_finish", True))
+    if clicks["hh_back"]:
+        st.session_state.step = "calculator"
+        st.session_state["_jump_top"] = True
+        st.rerun()
+    if clicks["hh_finish"]:
+        st.session_state.step = "breakdown"
+        st.session_state["_jump_top"] = True
+        st.rerun()
 
 # ---------- Breakdown ----------
 elif st.session_state.step == "breakdown":
+    jump_to_top()
     st.header("Detailed Breakdown")
 
     people = st.session_state.get("people", [])
@@ -805,15 +877,14 @@ elif st.session_state.step == "breakdown":
     other_monthly  = int(s.get("other_monthly_total", 0))
     addl_costs     = home_monthly + mods_monthly + other_monthly
 
-    # One-time and assets
-    mods_upfront   = int(s.get("mods_upfront_total", 0))
-    home_proceeds  = int(s.get("home_net_proceeds", 0))
-
-    assets_common  = int(s.get("assets_common_total", 0))
+    # Assets (sum proceeds + upfront mods if deducted)
+    assets_common  = int(s.get("assets_common_total", 0))  # reserved if you add common assets drawer later
     assets_detail  = int(s.get("assets_detailed_total", 0))
-
-    # Assets total: add home proceeds; subtract upfront mods
-    assets_total   = max(assets_common + assets_detail + home_proceeds - mods_upfront, 0)
+    proceeds_add   = int(s.get("home_sale_proceeds", 0))
+    mods_upfront   = int(s.get("mods_upfront_total", 0))
+    assets_total   = assets_common + assets_detail + proceeds_add - mods_upfront
+    if assets_total < 0:
+        assets_total = 0
 
     # Totals
     income_total = inc_A + inc_B + inc_house + va_A + va_B
@@ -826,7 +897,7 @@ elif st.session_state.step == "breakdown":
     c2.metric("Total Monthly Income (incl. VA)", f"${income_total:,.0f}")
     c3.metric("Estimated Monthly Gap", f"${gap:,.0f}")
 
-    # Years funded from assets
+    # Years funded from assets (bounded)
     years = 0.0
     if gap > 0 and assets_total > 0:
         years = round(assets_total / max(gap, 1), 1)
@@ -842,90 +913,74 @@ elif st.session_state.step == "breakdown":
         else:
             st.write(f"**{nameA}**: ${care_A:,.0f}/mo")
 
-    # Tables
-    try:
-        import pandas as pd
+    # Income composition (numeric fallback + optional donuts)
+    st.markdown("### Income breakdown")
+    inc_dict = {
+        "Individual A": inc_A,
+        "Individual B": inc_B,
+        "Household": inc_house,
+        "VA benefits": va_A + va_B,
+    }
+    st.write(inc_dict)
 
-        st.markdown("### Income breakdown")
-        inc_df = pd.DataFrame([
-            {"Category": "Individual A", "Amount": inc_A},
-            {"Category": "Individual B", "Amount": inc_B},
-            {"Category": "Household", "Amount": inc_house},
-            {"Category": "VA benefits", "Amount": va_A + va_B},
-        ])
-        st.dataframe(inc_df, hide_index=True, use_container_width=True)
+    st.markdown("### Additional monthly costs")
+    cost_dict = {
+        "Home (mortgage/tax/ins/HOA/utilities)": home_monthly,
+        "Home modifications (amortized)": mods_monthly,
+        "Other recurring": other_monthly,
+    }
+    st.write(cost_dict)
 
-        st.markdown("### Additional monthly costs")
-        costs_df = pd.DataFrame([
-            {"Category": "Home (carry, taxes, fees)", "Amount": home_monthly},
-            {"Category": "Home modifications (amortized)", "Amount": mods_monthly},
-            {"Category": "Other recurring", "Amount": other_monthly},
-        ])
-        st.dataframe(costs_df, hide_index=True, use_container_width=True)
+    st.markdown("### Assets summary")
+    asset_dict = {
+        "Common assets": assets_common,
+        "Detailed assets": assets_detail,
+        "Home sale proceeds applied": proceeds_add,
+        "Upfront mods deducted": mods_upfront,
+        "Total assets": assets_total,
+    }
+    st.write(asset_dict)
 
-        st.markdown("### Assets summary")
-        assets_df = pd.DataFrame([
-            {"Category": "Common assets", "Amount": assets_common},
-            {"Category": "Detailed assets", "Amount": assets_detail},
-            {"Category": "Home proceeds (one-time)", "Amount": home_proceeds},
-            {"Category": "Less upfront mods (one-time)", "Amount": -mods_upfront},
-            {"Category": "Total assets (net)", "Amount": assets_total},
-        ])
-        st.dataframe(assets_df, hide_index=True, use_container_width=True)
-
-        st.markdown("### One-time outlays")
-        one_rows = []
-        if mods_upfront > 0:
-            one_rows.append({"Item": "Home modifications (upfront)", "Amount": mods_upfront})
-        if one_rows:
-            one_df = pd.DataFrame(one_rows)
-            st.dataframe(one_df, hide_index=True, use_container_width=True)
-        else:
-            st.caption("No one-time outlays recorded.")
-    except Exception:
-        st.write("Table rendering failed; showing numeric summary:")
-        st.write({
-            "Income": {"A": inc_A, "B": inc_B, "Household": inc_house, "VA": va_A + va_B},
-            "Costs": {"Home": home_monthly, "Mods amortized": mods_monthly, "Other": other_monthly},
-            "Assets": {"Common": assets_common, "Detailed": assets_detail, "Home proceeds": home_proceeds,
-                       "Less upfront mods": -mods_upfront, "Total": assets_total},
-        })
-
-    # Optional donuts
+    # Optional donuts via Altair
     try:
         if ENABLE_CHARTS and HAVE_ALTAIR:
-            import pandas as pd, altair as alt  # noqa
-            if inc_df["Amount"].sum() > 0:
-                colA, colB = st.columns(2)
-                with colA:
-                    st.caption("Income composition")
-                    st.altair_chart(
-                        alt.Chart(inc_df).mark_arc(innerRadius=60).encode(
-                            theta="Amount", color="Category", tooltip=["Category", "Amount"]),
-                        use_container_width=True
-                    )
-                with colB:
-                    comp_df = pd.DataFrame([
-                        {"Category": "Care", "Amount": care_total},
-                        {"Category": "Home/Mods/Other", "Amount": home_monthly + mods_monthly + other_monthly},
-                    ])
-                    if comp_df["Amount"].sum() > 0:
-                        st.caption("Costs composition")
-                        st.altair_chart(
-                            alt.Chart(comp_df).mark_arc(innerRadius=60).encode(
-                                theta="Amount", color="Category", tooltip=["Category", "Amount"]),
-                            use_container_width=True
-                        )
+            import pandas as pd, altair as alt  # noqa: F401
+            inc_df = pd.DataFrame([
+                {"Category": "Indiv A", "Amount": inc_A},
+                {"Category": "Indiv B", "Amount": inc_B},
+                {"Category": "Household", "Amount": inc_house},
+                {"Category": "VA", "Amount": va_A + va_B},
+            ])
+            cost_df = pd.DataFrame([
+                {"Category": "Care", "Amount": care_total},
+                {"Category": "Home/Mods/Other", "Amount": addl_costs},
+            ])
+            colA, colB = st.columns(2)
+            with colA:
+                st.caption("Income composition")
+                st.altair_chart(
+                    alt.Chart(inc_df).mark_arc(innerRadius=60).encode(theta="Amount", color="Category",
+                                                                     tooltip=["Category", "Amount"]),
+                    use_container_width=True
+                )
+            with colB:
+                st.caption("Costs composition")
+                st.altair_chart(
+                    alt.Chart(cost_df).mark_arc(innerRadius=60).encode(theta="Amount", color="Category",
+                                                                       tooltip=["Category", "Amount"]),
+                    use_container_width=True
+                )
     except Exception:
-        pass
+        st.info("Charts unavailable. Showing numeric breakdown above.")
 
     st.divider()
-    b1, b2 = st.columns(2)
-    with b1:
-        if st.button("Back to Household"):
-            st.session_state.step = "household"
-            st.rerun()
-    with b2:
-        if st.button("Back to Costs"):
-            st.session_state.step = "calculator"
-            st.rerun()
+    clicks = row_buttons(("Back to Household", "bd_house"),
+                         ("Back to Costs", "bd_costs"))
+    if clicks["bd_house"]:
+        st.session_state.step = "household"
+        st.session_state["_jump_top"] = True
+        st.rerun()
+    if clicks["bd_costs"]:
+        st.session_state.step = "calculator"
+        st.session_state["_jump_top"] = True
+        st.rerun()
