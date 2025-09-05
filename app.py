@@ -207,6 +207,7 @@ elif st.session_state.step == "partner_context":
     st.header("Before we begin")
     st.markdown(f"""
 If **{primary}** needs to leave the home for assisted living or memory care, their spouse/partner may also need to consider some in-home help.  
+
 Would you like to evaluate a care support plan for a spouse or parter now so the household picture is complete.
 """)
 
