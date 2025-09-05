@@ -16,10 +16,10 @@ ENABLE_INHOME_DAYS_PER_MONTH = True
 ENABLE_MOBILITY_CARRYOVER = True
 ENABLE_HOUSEHOLD_DRAWERS = True
 ENABLE_VA_WIZARD = True
-ENABLE_HOME_DECISION = False     # off in this file to keep scope tight
-ENABLE_HOME_MODS = False         # off in this file to keep scope tight
+ENABLE_HOME_DECISION = True     # off in this file to keep scope tight
+ENABLE_HOME_MODS = True         # off in this file to keep scope tight
 ENABLE_DETAILS_PAGE = True
-ENABLE_CHARTS = False            # leave False to avoid chart dependency issues
+ENABLE_CHARTS = True            # leave False to avoid chart dependency issues
 
 # ---------- Optional charts dependency ----------
 try:
