@@ -18,13 +18,16 @@
       "cognitive_function": 2
     }
   },
+
   "final_decision_thresholds": {
     "assisted_living_min": 6,
     "in_home_min": 3,
     "dependence_flags_min": 2
   },
+
   "decision_precedence": [
     "memory_care_override",
+    "memory_care_support_gap",
     "dependence_flag_logic",
     "assisted_living_score",
     "balanced_al",
@@ -36,63 +39,81 @@
     "no_care_needed",
     "in_home_with_support_fallback"
   ],
+
   "final_recommendation": {
     "memory_care_override": {
-      "criteria": "Trigger if severe_cognitive_risk AND (no_support OR high_dependence OR high_safety_concern)",
-      "message_template": "{greeting} {name}, with significant memory challenges and limited daily support, **memory care** is the safest way to ensure you’re well supported. {preference_clause}",
+      "criteria": "Trigger if severe_cognitive_risk OR (moderate_cognitive_decline AND high_safety_concern) OR wandering_or_exit_seeking",
+      "message_template": "{greeting} {name}, with significant memory challenges, **memory care** is the safest way to keep you supported and secure. We’ll focus on familiar routines, frequent visits, and a warm environment.",
       "outcome": "memory_care"
     },
+
+    "memory_care_support_gap": {
+      "criteria": "severe_cognitive_risk AND (no_support OR high_dependence OR high_safety_concern)",
+      "message_template": "{greeting} {name}, because memory needs are high and daily support is limited, **memory care** offers reliable, around-the-clock help. We’ll keep comfort and connection front and center.",
+      "outcome": "memory_care"
+    },
+
     "dependence_flag_logic": {
       "criteria": "Trigger if at least 2 of: high_dependence, high_mobility_dependence, no_support, severe_cognitive_risk, high_safety_concern",
-      "message_template": "{greeting} {name}, needs like {key_issues} point to **assisted living** for reliable daily help and safety. {preference_clause}",
+      "message_template": "{greeting} {name}, needs like {key_issues} point to **assisted living** for dependable daily help and safety. We’ll prioritize comfort, routine, and social connection.",
       "outcome": "assisted_living"
     },
+
     "assisted_living_score": {
       "criteria": "assisted_living_score >= assisted_living_min",
-      "message_template": "{greeting} {name}, based on needs like {key_issues}, **assisted living** could provide the care and comfort you deserve. {preference_clause}",
+      "message_template": "{greeting} {name}, based on needs like {key_issues}, **assisted living** is a strong fit for safe daily support and community.",
       "outcome": "assisted_living"
     },
+
     "balanced_al": {
       "criteria": "assisted_living_score >= assisted_living_min AND in_home_score >= in_home_min AND NONE OF (high_dependence, high_mobility_dependence, no_support, high_safety_concern, severe_cognitive_risk)",
-      "message_template": "{greeting} {name}, with {key_issues}, **assisted living** is a strong fit now; if things stabilize, in-home could be revisited later. {preference_clause}",
+      "message_template": "{greeting} {name}, with {key_issues}, **assisted living** offers the most reliable help right now; we can always revisit in-home options if needs change.",
       "outcome": "assisted_living"
     },
+
     "in_home_with_mobility_challenges": {
       "criteria": "assisted_living_score >= (assisted_living_min - 1) AND in_home_score >= in_home_min AND high_mobility_dependence AND NOT (moderate_cognitive_decline OR severe_cognitive_risk)",
       "message_template": "{greeting} {name}, your mobility needs ({key_issues}) make **in-home care with equipment and help** a good fit, though **assisted living** could make daily routines easier. {preference_clause}",
       "outcome": "in_home"
     },
+
     "in_home_possible_with_cognitive_and_safety_risks": {
       "criteria": "in_home_score >= in_home_min AND assisted_living_score >= in_home_min AND ANY OF (moderate_cognitive_decline, severe_cognitive_risk, moderate_safety_concern, high_safety_concern)",
       "message_template": "{greeting} {name}, you’re holding strong, but {key_issues} mean **in-home care with extra support** is essential. Let’s make safety the priority. {preference_clause}",
       "outcome": "in_home"
     },
+
     "in_home_with_support_and_financial_needs": {
       "criteria": "in_home_score >= in_home_min AND assisted_living_score < assisted_living_min AND needs_financial_assistance",
       "message_template": "{greeting} {name}, **in-home care** suits your needs like {key_issues}; with costs in mind, we’ll focus on affordable support. {preference_clause}",
       "outcome": "in_home"
     },
+
     "independent_with_safety_concern": {
       "criteria": "Independent otherwise, but moderate_safety_concern OR high_safety_concern present; NO cognitive or heavy dependence flags",
       "message_template": "{greeting} {name}, you’re doing well overall; a few safety tweaks for {key_issues} can keep home comfortable. {preference_clause}",
       "outcome": "in_home"
     },
+
     "independent_no_support_risk": {
       "criteria": "Independent & safe; no_support present; NO cognitive/major mobility flags",
       "message_template": "{greeting} {name}, you’re managing beautifully, but with **no regular support** ({key_issues}), a light **in-home check-in plan** helps. {preference_clause}",
       "outcome": "in_home"
     },
+
     "no_care_needed": {
       "criteria": "assisted_living_score < in_home_min AND in_home_score < in_home_min AND NO flags among: high_dependence, high_mobility_dependence, no_support, severe_cognitive_risk, high_safety_concern, moderate_cognitive_decline, moderate_safety_concern, high_risk",
       "message_template": "{greeting} {name}, you’re {positive_state} with **no support needs** right now. {encouragement} — we’re here if things change. {preference_clause}",
       "outcome": "none"
     },
+
     "in_home_with_support_fallback": {
       "criteria": "Default when nothing else selected",
       "message_template": "{greeting} {name}, **in-home care with help for {key_issues}** keeps you comfortable at home, especially since you {home_preference}. {preference_clause}",
       "outcome": "in_home"
     }
   },
+
   "greeting_templates": [
     "Hi",
     "Hello",
@@ -100,6 +121,7 @@
     "Greetings",
     "Good to connect with"
   ],
+
   "positive_state_templates": [
     "doing amazing",
     "thriving beautifully",
@@ -107,6 +129,7 @@
     "shining bright",
     "doing wonderfully"
   ],
+
   "encouragement_templates": [
     "Keep shining",
     "Stay amazing",
@@ -114,6 +137,7 @@
     "Continue doing great",
     "Stay strong"
   ],
+
   "preference_clause_templates": {
     "open_to_move": [
       "Since you’re open to new options, let’s explore what feels like the best fit for you.",
@@ -144,6 +168,7 @@
       "Let’s explore the best options to keep you comfortable and secure."
     ]
   },
+
   "issue_phrases": {
     "high_dependence": [
       "needing help with daily tasks like dressing or eating",
@@ -279,18 +304,14 @@
       "comfortable with paying for any care needed"
     ]
   },
+
   "social_isolation_warning": {
-    "trigger_if_flags": [
-      "high_risk",
-      "mental_health_concern"
-    ],
+    "trigger_if_flags": ["high_risk", "mental_health_concern"],
     "message_template": "{greeting} {name}, feeling lonely or down can weigh on you. {recommendation} could bring more connection and warmth to your days. {preference_clause}"
   },
+
   "cognitive_decline_warning": {
-    "trigger_if_flags": [
-      "moderate_cognitive_decline",
-      "severe_cognitive_risk"
-    ],
+    "trigger_if_flags": ["moderate_cognitive_decline", "severe_cognitive_risk"],
     "criteria": "Show if moderate_cognitive_decline or severe_cognitive_risk is present",
     "message_template": "{greeting} {name}, those memory challenges are something to watch. {recommendation} can provide the right support to keep you safe. {preference_clause}"
   }
