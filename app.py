@@ -206,12 +206,12 @@ elif st.session_state.step == "partner_context":
 
     st.header("Before we begin")
     st.markdown(f"""
-If **{primary}** needs assisted living or memory care, their spouse/partner may also need some in-home help.  
-You can include a support plan for them now so the household picture is complete.
+If **{primary}** needs to leave the home for assisted living or memory care, their spouse/partner may also need to consider some in-home help.  
+Would you like to evaluate a care support plan for a spouse or parter now so the household picture is complete.
 """)
 
     if single:
-        add = st.checkbox("Also include a support plan for the spouse/partner",
+        add = st.checkbox("Yes, I want to evaluate a plan for a spouse/partner",
                           value=False, key="care_partner_add")
         if add:
             st.text_input("Spouse/partner name", value="",
@@ -219,7 +219,7 @@ You can include a support plan for them now so the household picture is complete
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Skip, start care questions"):
+        if st.button("No, let's just plan for **{primary}** "):
             st.session_state.step = "planner"
             st.rerun()
     with c2:
