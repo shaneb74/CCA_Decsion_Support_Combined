@@ -4,6 +4,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from dataclasses import asdict, is_dataclass
 from collections.abc import Mapping
 import traceback
 import streamlit as st
@@ -85,37 +86,37 @@ def reset_all():
 
 def _normalize_planner_result(res):
     """
-    Normalize PlannerEngine.run return types into a dict with keys:
-    care_type, flags, scores, reasons, advisory
+    Convert PlannerEngine.run(...) output into a dict with keys:
+    care_type, flags, scores, reasons, advisory.
+    Accepts dataclass/object, dict, or tuple/list.
     """
-    if isinstance(res, Mapping):
+    if is_dataclass(res):
+        out = dict(asdict(res))
+    elif isinstance(res, Mapping):
         out = dict(res)
     elif isinstance(res, (tuple, list)):
-        # Accept either (care_type, flags, scores, reasons, advisory)
-        # or older (care_type, reasons, advisory) shapes.
         out = {}
         if len(res) >= 1: out["care_type"] = res[0]
-        if len(res) >= 2 and isinstance(res[1], (set, list)): out["flags"] = list(res[1])
-        if len(res) >= 3 and isinstance(res[2], (dict, type(None))): out["scores"] = res[2] or {}
-        if len(res) >= 4 and isinstance(res[3], (list, tuple)): out["reasons"] = list(res[3])
+        if len(res) >= 2: out["flags"]    = res[1]
+        if len(res) >= 3: out["scores"]   = res[2]
+        if len(res) >= 4: out["reasons"]  = res[3]
         if len(res) >= 5: out["advisory"] = res[4]
-        # older 3-tuple fallback
-        if "reasons" not in out and len(res) >= 2 and isinstance(res[1], (list, tuple)):
-            out["reasons"] = list(res[1])
-        if "advisory" not in out and len(res) >= 3 and isinstance(res[2], (str, type(None))):
-            out["advisory"] = res[2]
-    else:
+    elif hasattr(res, "__dict__"):
         out = {
             "care_type": getattr(res, "care_type", None),
-            "flags": getattr(res, "flags", None),
-            "scores": getattr(res, "scores", None),
-            "reasons": getattr(res, "reasons", None),
+            "flags":    getattr(res, "flags", None),
+            "scores":   getattr(res, "scores", None),
+            "reasons":  getattr(res, "reasons", None),
             "advisory": getattr(res, "advisory", None),
         }
+    else:
+        out = {}
+
     out["care_type"] = out.get("care_type") or "in_home"
-    out["flags"] = list(out.get("flags") or [])
-    out["scores"] = dict(out.get("scores") or {})
-    out["reasons"] = list(out.get("reasons") or [])
+    out["flags"]     = list(out.get("flags")  or [])
+    out["scores"]    = dict(out.get("scores") or {})
+    out["reasons"]   = list(out.get("reasons") or [])
+    # advisory can be None or str
     return out
 
 def num(label, key, default=0, step=50, min_value=0, help=None):
@@ -176,7 +177,7 @@ elif st.session_state.step == "audience":
             n2 = st.text_input("Parent 2 name", value="", placeholder="Enter name", key="p2_name")
         people = [
             {"id": "A", "display_name": n1 or "Mom", "relationship": "parent"},
-            {"id": "B", "display_name": n2 or "Dad", "relationship": "parent"},
+            {"id": "B", "display_name": n2 or "Dad",  "relationship": "parent"},
         ]
     else:
         n = st.text_input("Name", value="", placeholder="Enter name", key="p_name")
@@ -266,6 +267,20 @@ elif st.session_state.step == "planner":
     if mobility_q_idx is not None:
         st.session_state.mobility_raw[person["id"]] = answers.get(f"q{mobility_q_idx}")
 
+    # optional conditional
+    conditional_answer = None
+    cond_cfg = qa.get("conditional_questions")
+    if cond_cfg:
+        cq = cond_cfg[0]
+        label = cq.get("question", "Additional question")
+        answers_map = cq.get("answers", {"1": "Yes", "2": "No"})
+        ordered_ckeys = [str(n) for n in sorted(map(int, answers_map.keys()))]
+        sel = st.radio(label, options=[answers_map[k] for k in ordered_ckeys], key=f"{person['id']}_cond")
+        for k, v in answers_map.items():
+            if v == sel:
+                conditional_answer = k
+                break
+
     st.session_state.answers[person["id"]] = answers
 
     c1, c2 = st.columns(2)
@@ -279,13 +294,15 @@ elif st.session_state.step == "planner":
     with c2:
         if st.button("Next"):
             try:
-                res = planner.run(answers)
-                norm = _normalize_planner_result(res)
+                res = planner.run(answers, conditional_answer=conditional_answer)
             except Exception:
                 st.error("PlannerEngine.run failed.")
                 st.code(traceback.format_exc())
                 st.stop()
+
+            norm = _normalize_planner_result(res)
             st.session_state.planner_results[person["id"]] = norm
+
             # Transition screen before next person
             if i + 1 < len(people):
                 st.session_state.next_person_index = i + 1
