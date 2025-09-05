@@ -336,9 +336,9 @@ elif st.session_state.step == "planner_transition":
         st.rerun()
     just_done = people[idx - 1]["display_name"] if idx - 1 >= 0 else "Person 1"
     next_up   = people[idx]["display_name"]
-    st.header("Great — first set complete")
-    st.write(f"You’ve finished the care questions for **{just_done}**.")
-    st.write(f"Now let’s assess **{next_up}**.")
+    st.header(f"Nice! You’ve finished the care questions for **{just_done}**.")
+    st.write(f"Let's go through it one more time with **{next_up}** in mind.")
+    st.write("Ready to go?")
     if st.button("Continue"):
         st.session_state.current_person = idx
         st.session_state.step = "planner"
