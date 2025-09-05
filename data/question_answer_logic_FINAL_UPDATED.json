@@ -1,29 +1,24 @@
 {
   "questions": [
     {
-      "question": "How would you describe your financial situation when it comes to paying for care?",
+      "question": "Are you worried about covering the costs of care?",
       "answers": {
-        "1": "I don\u2019t worry about money\u2014I can afford any care I need.",
-        "2": "I\u2019m financially comfortable, but I want to stay cost-conscious.",
-        "3": "I can afford some care, but cost is a major factor.",
-        "4": "I worry about how I\u2019ll pay for care and may need financial help."
+        "1": "Not worried—I can cover any care I need.",
+        "2": "Somewhat worried—I’d need to budget carefully.",
+        "3": "Very worried—cost is a big concern for me."
       },
       "trigger": {
         "financial_feasibility": [
           {
             "answer": 1,
-            "flag": "can_afford_assisted_living"
+            "flag": "can_afford_care"
           },
           {
             "answer": 2,
-            "flag": "can_afford_in_home"
+            "flag": "moderate_financial_concern"
           },
           {
             "answer": 3,
-            "flag": "needs_financial_assistance"
-          },
-          {
-            "answer": 4,
             "flag": "needs_financial_assistance"
           }
         ]
@@ -32,7 +27,7 @@
     {
       "question": "How independent are you with daily tasks such as bathing, dressing, and preparing meals?",
       "answers": {
-        "1": "I\u2019m fully independent and handle all tasks on my own.",
+        "1": "I’m fully independent and handle all tasks on my own.",
         "2": "I occasionally need reminders or light assistance.",
         "3": "I need help with some of these tasks regularly.",
         "4": "I rely on someone else for most daily tasks."
@@ -72,22 +67,25 @@
       }
     },
     {
-      "question": "How often do you engage in social activities or interact with others?",
+      "question": "How often do you feel lonely, down, or socially disconnected?",
       "answers": {
-        "1": "Frequently\u2014daily or almost daily.",
-        "2": "Occasionally\u2014at least weekly.",
-        "3": "Rarely\u2014maybe once or twice a month.",
-        "4": "Almost never\u2014I often feel isolated."
+        "1": "Rarely—I’m socially active and feel good most days.",
+        "2": "Sometimes—I connect weekly but have some down moments.",
+        "3": "Often—I feel isolated or down much of the time."
       },
       "trigger": {
         "social_isolation": [
           {
-            "answer": 3,
+            "answer": 2,
             "flag": "moderate_risk"
           },
           {
-            "answer": 4,
+            "answer": 3,
             "flag": "high_risk"
+          },
+          {
+            "answer": 3,
+            "flag": "mental_health_concern"
           }
         ]
       }
@@ -97,7 +95,7 @@
       "answers": {
         "1": "Yes, I have someone with me most of the time.",
         "2": "Yes, I have support a few days a week.",
-        "3": "Infrequently\u2014someone checks in occasionally.",
+        "3": "Infrequently—someone checks in occasionally.",
         "4": "No regular caregiver or support available."
       },
       "trigger": {
@@ -114,22 +112,30 @@
       }
     },
     {
-      "question": "How would you rate your memory or cognitive function?",
+      "question": "Thinking about your memory and focus, is someone usually around to help you?",
       "answers": {
-        "1": "Sharp\u2014I have no issues.",
-        "2": "Occasionally forgetful, but nothing serious.",
-        "3": "Noticeable memory problems that affect daily tasks.",
-        "4": "Severe memory issues or diagnosed cognitive decline."
+        "1": "My memory’s sharp, no help needed.",
+        "2": "Slight forgetfulness, but someone helps daily.",
+        "3": "Noticeable problems, and support’s always there.",
+        "4": "Noticeable problems, and I’m mostly on my own."
       },
       "trigger": {
         "cognitive_function": [
+          {
+            "answer": 2,
+            "flag": "mild_cognitive_decline"
+          },
           {
             "answer": 3,
             "flag": "moderate_cognitive_decline"
           },
           {
             "answer": 4,
-            "flag": "severe_cognitive_decline"
+            "flag": "moderate_cognitive_decline"
+          },
+          {
+            "answer": 4,
+            "flag": "severe_cognitive_risk"
           }
         ]
       }
@@ -137,7 +143,7 @@
     {
       "question": "How safe do you feel in your home in terms of fall risk, emergencies, or managing on your own?",
       "answers": {
-        "1": "Very safe\u2014I have everything I need.",
+        "1": "Very safe—I have everything I need.",
         "2": "Mostly safe, but a few things concern me.",
         "3": "Sometimes I feel unsafe or unsure.",
         "4": "I often feel unsafe or at risk."
@@ -156,11 +162,11 @@
       }
     },
     {
-      "question": "How accessible are services like pharmacies, grocery stores, and doctor\u2019s offices from your home?",
+      "question": "How accessible are services like pharmacies, grocery stores, and doctor’s offices from your home?",
       "answers": {
         "1": "I can walk to most of them easily.",
         "2": "I can drive or get a ride with little trouble.",
-        "3": "It\u2019s difficult to get to these places without help.",
+        "3": "It’s difficult to get to these places without help.",
         "4": "I have no easy access and need assistance to get anywhere."
       },
       "trigger": {
@@ -175,18 +181,29 @@
           }
         ]
       }
-    }
-  ],
-  "conditional_questions": [
+    },
     {
-      "trigger": "severe_cognitive_decline",
-      "question": "Do you have or can you arrange for 24/7 in-home care and supervision?",
+      "question": "How important is it for you to stay in your current home?",
       "answers": {
-        "1": "Yes",
-        "2": "No"
+        "1": "Not important—I’m open to other options.",
+        "2": "Somewhat important—I’d prefer to stay but could move.",
+        "3": "Very important—I strongly want to stay home."
       },
-      "flag_on_answer": {
-        "2": "memory_care_required"
+      "trigger": {
+        "home_preference": [
+          {
+            "answer": 1,
+            "flag": "open_to_move"
+          },
+          {
+            "answer": 2,
+            "flag": "prefers_home"
+          },
+          {
+            "answer": 3,
+            "flag": "strongly_prefers_home"
+          }
+        ]
       }
     }
   ]
