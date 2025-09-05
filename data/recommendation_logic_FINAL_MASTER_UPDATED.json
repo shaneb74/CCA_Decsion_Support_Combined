@@ -19,14 +19,14 @@
     }
   },
 
-  // ===== NEW: machine-readable thresholds =====
+  # ===== NEW: machine-readable thresholds =====
   "final_decision_thresholds": {
     "assisted_living_min": 6,
     "in_home_min": 3,
     "dependence_flags_min": 2
   },
 
-  // ===== NEW: strict precedence (first match wins) =====
+  # ===== NEW: strict precedence (first match wins) =====
   "decision_precedence": [
     "memory_care_override",
     "dependence_flag_logic",
