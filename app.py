@@ -38,7 +38,7 @@ REC_PATH = DATA_DIR / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
 # ---------------- Engines ----------------
 try:
-    from engines import PlannerEngine, CalculatorEngine, CalcInputs
+    from engines import PlannerEngine, CalculatorEngine
 except Exception:
     st.error("Failed to import engines.py. See traceback:")
     st.code(traceback.format_exc())
@@ -67,7 +67,7 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-# ---------------- Helpers ----------------
+# ---------- Helpers ----------
 def make_inputs(**kwargs):
     """Create a calculator inputs object regardless of CalcInputs availability."""
     try:
