@@ -1,38 +1,100 @@
-# app.py — Senior Navigator (Planner → Recommendation → Costs → Household)
-# All JSON files and code live in the repo root. Assets drawers live in asset_engine.
+# app.py — Senior Navigator (planner → recommendations → costs → household)
+# All JSON files (QA + recommendation) are expected in the repo root.
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 import traceback
+import json
+import random
+
 import streamlit as st
 
-# ---------- Page config ----------
+# ----------------------- Page config -----------------------
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
 
-# ---------- Paths (root) ----------
+# ----------------------- Paths (root) ----------------------
 ROOT = Path(__file__).resolve().parent
 QA_PATH  = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
-# ---------- Engines ----------
+# ----------------------- Imports ---------------------------
 try:
-    from engines import PlannerEngine, CalculatorEngine
+    from engines import PlannerEngine, CalculatorEngine  # user-provided engines.py
 except Exception:
     st.error("Failed to import engines.py")
     st.code(traceback.format_exc())
     st.stop()
 
+# isolate drawers (no UX changes but kept outside app.py)
 try:
-    import asset_engine  # your drawers live here
+    import asset_engine  # user-provided asset_engine.py
 except Exception:
-    asset_engine = None  # optional
+    asset_engine = None  # we'll gracefully handle missing/older modules
 
-# ---------- Init engines ----------
-for p in (QA_PATH, REC_PATH):
-    if not p.exists():
-        st.error(f"Missing required file: {p.name}")
-        st.stop()
 
+# ----------------------- Utilities -------------------------
+def make_inputs(**kwargs):
+    """Create a light object for calculator inputs."""
+    obj = SimpleNamespace()
+    for k, v in kwargs.items():
+        setattr(obj, k, v)
+    return obj
+
+
+def reset_all():
+    for k in list(st.session_state.keys()):
+        if not k.startswith("_"):
+            del st.session_state[k]
+    st.session_state.step = "intro"
+
+
+def _is_intlike(x) -> bool:
+    try:
+        int(str(x))
+        return True
+    except Exception:
+        return False
+
+
+def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'."""
+    if not isinstance(amap, dict) or not amap:
+        return [], []
+    keys = list(amap.keys())
+    if all(_is_intlike(k) for k in keys):
+        ordered_keys = [str(k) for k in sorted(int(str(k)) for k in keys)]
+    else:
+        ordered_keys = [str(k) for k in keys]  # preserve JSON insertion order
+    labels = [amap[k] for k in ordered_keys]
+    return ordered_keys, labels
+
+
+def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None) -> str | None:
+    keys, labels = order_answer_map(amap)
+    if not labels:
+        return default_key
+    if default_key is not None and str(default_key) in keys:
+        idx = keys.index(str(default_key))
+    else:
+        idx = 0
+    sel_label = st.radio(label, labels, index=idx, key=key, help=help_text)
+    return keys[labels.index(sel_label)]
+
+
+def clamp(n, lo, hi):
+    return max(lo, min(hi, n))
+
+
+# ----------------------- Load JSONs ------------------------
+missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
+if missing:
+    st.error("Missing required JSON files:\n" + "\n".join(f"• {m}" for m in missing))
+    st.stop()
+
+# ----------------------- Engines ---------------------------
 try:
     planner = PlannerEngine(str(QA_PATH), str(REC_PATH))
 except Exception:
@@ -48,83 +110,37 @@ except Exception:
     st.stop()
 
 
-# ---------- Helpers ----------
-def make_inputs(**kwargs):
-    obj = SimpleNamespace()
-    for k, v in kwargs.items():
-        setattr(obj, k, v)
-    return obj
-
-
-def reset_all():
-    for k in list(st.session_state.keys()):
-        if not k.startswith("_"):
-            del st.session_state[k]
-    st.session_state.step = "intro"
-
-
-def order_answer_map(amap):
-    """Return (ordered_keys, ordered_labels) whether keys are '1','2',... or arbitrary strings."""
-    if not isinstance(amap, dict) or not amap:
-        return [], []
-    keys = list(amap.keys())
-
-    def _is_intlike(x):
-        try:
-            int(str(x))
-            return True
-        except Exception:
-            return False
-
-    if all(_is_intlike(k) for k in keys):
-        ordered_keys = [str(k) for k in sorted(int(str(k)) for k in keys)]
-    else:
-        ordered_keys = [str(k) for k in sorted(map(str, keys))]
-    ordered_labels = [amap[k] for k in ordered_keys]
-    return ordered_keys, ordered_labels
-
-
-def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None):
-    """Render a radio from a JSON answer map and return the SELECTED KEY (string)."""
-    ok, ol = order_answer_map(amap)
-    if not ol:
-        return default_key
-    if default_key is not None and str(default_key) in ok:
-        idx = ok.index(str(default_key))
-    else:
-        idx = 0
-    sel_label = st.radio(label, options=ol, index=idx, key=key, help=help_text)
-    return ok[ol.index(sel_label)]
-
-
-# ---------- Session ----------
+# ----------------------- Session init ----------------------
 if "step" not in st.session_state:
     st.session_state.step = "intro"
 
 st.sidebar.title("Senior Navigator")
-st.sidebar.caption("Planner → Costs → Household")
+st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all)
 
 
-# ===================== Flow =====================
+# ----------------------- Steps -----------------------------
 
-# ----- Intro -----
+# INTRO
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
     st.markdown(
-        "Choosing senior living or in-home support can feel overwhelming. "
-        "This tool breaks it into clear steps.\n\n"
-        "1. Answer quick care questions → we recommend a care type.  \n"
-        "2. Review costs for that scenario (you can switch it).  \n"
-        "3. Add income, benefits, and assets to see affordability.  \n"
-        "4. View a detailed breakdown you can save or revisit."
+        """
+Choosing senior living or in-home support can feel overwhelming.
+
+**What happens next**
+1. Answer quick care questions → we recommend a care type.  
+2. Review costs for that scenario (you can switch).  
+3. (Optional) Add income, benefits, assets, and home decisions.  
+4. See a detailed breakdown and adjust anything.
+"""
     )
     if st.button("Start"):
         st.session_state.step = "audience"
         st.rerun()
 
-# ----- Audience -----
-elif st.session_state.step == "audience":
+# AUDIENCE
+elif st.session_state.step = "audience":
     st.header("Who is this plan for?")
     role = st.radio(
         "Select one:",
@@ -146,172 +162,74 @@ elif st.session_state.step == "audience":
     else:
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
-        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[
-            role
-        ]
+        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[role]
         people = [{"id": "A", "display_name": n, "relationship": rel}]
 
     if st.button("Continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
-        st.session_state.answers = {}
         st.session_state.planner_results = {}
-        # Interstitial only when single audience and not "Both parents"
-        st.session_state.step = "partner_interstitial" if (role != "Both parents" and len(people) == 1) else "planner"
+        st.session_state.person_costs = {}
+        st.session_state.step = "planner"
         st.rerun()
 
-# ----- Partner Interstitial (only for single person audience) -----
-elif st.session_state.step == "partner_interstitial":
-    peeps = st.session_state.get("people", [])
-    single = len(peeps) == 1
-    primary = peeps[0]["display_name"] if peeps else "Person A"
-
-    st.header("Before we begin")
-    st.markdown(
-        f"If **{primary}** needs assisted living or memory care, their spouse/partner may also "
-        f"need some in-home help. You can include a simple support plan for them now so the "
-        f"household picture is complete."
-    )
-
-    add = st.checkbox("Yes, I want to evaluate a plan for a spouse/partner", key="care_partner_add")
-    if add:
-        st.text_input("Spouse/partner name", value="", placeholder="Enter spouse/partner name", key="care_partner_name")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button(f"No, let's just plan for {primary}"):
-            st.session_state.step = "planner"
-            st.rerun()
-    with c2:
-        if st.button("Add spouse/partner and continue", disabled=not st.session_state.get("care_partner_add", False)):
-            if single and st.session_state.get("care_partner_add"):
-                st.session_state.people.append(
-                    {
-                        "id": "B",
-                        "display_name": st.session_state.get("care_partner_name") or "Spouse/Partner",
-                        "relationship": "spouse",
-                    }
-                )
-            st.session_state.step = "planner"
-            st.rerun()
-
-# ----- Planner (one question at a time per person) -----
+# PLANNER (per person)
 elif st.session_state.step == "planner":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
-    if not people or i >= len(people):
-        st.session_state.step = "recommendations"
+    p = people[i]
+    pid = p["id"]
+    name = p["display_name"]
+
+    st.header(f"Care Assessment for {name}")
+    st.markdown("Answer these quick questions to get a personalized recommendation.")
+
+    a_ss = []
+    for q_idx, q in enumerate(planner.qa.get("questions", [])):
+        label = q["question"]
+        amap = q["answers"]
+        key = f"q{q_idx}"
+        ans = radio_from_answer_map(label, amap, key=key)
+        a_ss.append(ans)
+
+    if st.button("Save and continue"):
+        answers = {f"q{q_idx}": int(a) for q_idx, a in enumerate(a_ss) if a is not None}
+        result = planner.run(answers, name=name)
+        st.session_state.planner_results[pid] = result
+        st.session_state.current_person += 1
+        if st.session_state.current_person >= len(people):
+            st.session_state.step = "recommendations"
+        else:
+            st.session_state.step = "person_transition"
         st.rerun()
 
-    person = people[i]
-    name = person["display_name"]
-    st.header(f"Care Plan Questions for {name}")
-    st.caption(f"Person {i+1} of {len(people)}")
-
-    qa = planner.qa or {}
-    questions = qa.get("questions", [])
-    cond_cfg = qa.get("conditional_questions")
-
-    # one-question-at-a-time index
-    wkey = f"qidx_{person['id']}"
-    if wkey not in st.session_state:
-        st.session_state[wkey] = 0
-
-    idx = st.session_state[wkey]
-    total = len(questions)
-    idx = max(0, min(idx, total - 1))
-    st.progress((idx + 1) / max(1, total))
-
-    answers = st.session_state.answers.get(person["id"], {})
-
-    # render current question
-    q = questions[idx]
-    amap = q.get("answers", {})
-    ordered_keys, ordered_labels = order_answer_map(amap)
-    default_key = ordered_keys[0] if ordered_keys else None
-
-    sel_key = radio_from_answer_map(
-        f"{q.get('question','Question')} (for {name})",
-        amap,
-        key=f"{person['id']}_q{idx+1}",
-        help_text=q.get("help"),
-        default_key=default_key,
-    )
-    # store INT option key using 1-based q index
-    if sel_key is not None:
-        try:
-            answers[f"q{idx+1}"] = int(sel_key)
-        except Exception:
-            # if keys are not numeric, still store as string
-            answers[f"q{idx+1}"] = sel_key
-    st.session_state.answers[person["id"]] = answers
-
-    # nav buttons
-    b1, b2, b3 = st.columns([1, 1, 1])
-    with b1:
-        if st.button("Back", disabled=(idx == 0)):
-            st.session_state[wkey] = max(0, idx - 1)
-            st.rerun()
-    with b2:
-        if st.button("Next", disabled=(idx >= total - 1)):
-            st.session_state[wkey] = min(total - 1, idx + 1)
-            st.rerun()
-    with b3:
-        # Finish only on last question
-        if st.button("Finish", disabled=(idx != total - 1)):
-            try:
-                res = planner.run(answers, name=name)  # <— correct signature
-            except Exception:
-                st.error("PlannerEngine.run failed.")
-                st.code(traceback.format_exc())
-                st.stop()
-
-            st.session_state.planner_results[person["id"]] = {
-                "care_type": res.care_type,
-                "flags": set(res.flags),
-                "scores": res.scores,
-                "reasons": res.reasons,
-                "advisory": res.narrative,
-                "raw_rule": res.raw_rule,
-            }
-
-            # reset q index for next person
-            st.session_state[wkey] = 0
-
-            # If there's a next person, show transition screen
-            if i + 1 < len(people):
-                st.session_state.current_person = i + 1
-                st.session_state.step = "person_transition"
-                st.rerun()
-            else:
-                st.session_state.step = "recommendations"
-                st.rerun()
-
-# ----- Interstitial between persons -----
+# PERSON TRANSITION
 elif st.session_state.step == "person_transition":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
     if i >= len(people):
-        st.session_state.step = "recommendations"; st.rerun()
+        st.session_state.step = "recommendations"
+        st.rerun()
     name = people[i]["display_name"]
     st.header("Great — first plan saved.")
     st.info(f"Now let’s assess **{name}**.")
-    if st.button("Start {name}'s care plan"):
+    if st.button(f"Start {name}'s care plan"):
         st.session_state.step = "planner"
         st.rerun()
 
-# ----- Recommendations -----
+# RECOMMENDATIONS
 elif st.session_state.step == "recommendations":
     st.header("Our Recommendation")
     st.caption("Start with the recommended scenario, or switch without redoing questions.")
 
     for p in st.session_state.get("people", []):
-        pid = p["id"]; name = p["display_name"]
-        rec = st.session_state.planner_results.get(pid, {})
+        pid = p["id"]
+        name = p["display_name"]
+        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
 
-        care_type = rec.get("care_type", "in_home")
-        reasons   = rec.get("reasons", [])
-        narrative = rec.get("advisory") or rec.get("message") or rec.get("narrative")
+        care_type = rec.care_type
+        reasons = rec.reasons
+        narrative = rec.narrative
 
         nice = {
             "none": "None",
@@ -321,7 +239,7 @@ elif st.session_state.step == "recommendations":
         }
         st.subheader(f"{name}: {nice.get(care_type, care_type).title()} (recommended)")
         if reasons:
-            for r in reasons[:5]:
+            for r in reasons:
                 st.write("• " + str(r))
         if narrative:
             st.info(narrative)
@@ -336,80 +254,162 @@ elif st.session_state.step == "recommendations":
             key=f"override_{pid}",
         )
         reverse = {v: k for k, v in nice.items()}
-        st.session_state.setdefault("care_overrides", {})[pid] = reverse[label]
+        st.session_state.care_overrides = st.session_state.get("care_overrides", {})
+        st.session_state.care_overrides[pid] = reverse[label]
 
         st.divider()
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Back to questions"):
-            st.session_state.step = "planner"; st.rerun()
+            st.session_state.step = "planner"
+            st.rerun()
     with c2:
         if st.button("See Costs"):
-            st.session_state.step = "calculator"; st.rerun()
+            st.session_state.step = "calculator"
+            st.rerun()
+    with c3:
+        if st.button("Finish"):
+            st.session_state.step = "intro"
+            st.rerun()
 
-# ----- Calculator -----
+# CALCULATOR
 elif st.session_state.step == "calculator":
     st.header("Cost Planner")
-
-    # simple geographic factor
-    state = st.selectbox("Location", ["National", "Washington", "California", "Texas", "Florida"])
-    factor = {"National": 1.0, "Washington": 1.15, "California": 1.25, "Texas": 0.95, "Florida": 1.05}[state]
-
-    total = 0
+    combined = 0
     for p in st.session_state.get("people", []):
-        pid = p["id"]; name = p["display_name"]
-        rec = st.session_state.planner_results.get(pid, {})
-        care_type = st.session_state.get("care_overrides", {}).get(pid, rec.get("care_type", "in_home"))
+        pid = p["id"]
+        name = p["display_name"]
+        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
+        care_type = st.session_state.get("care_overrides", {}).get(pid, rec.care_type)
 
-        st.subheader(f"{name} — Scenario: {care_type.replace('_',' ').title()}")
-
-        # Simple inputs; you can extend as needed (room_type, mobility, etc.)
-        inp = make_inputs(state=state, care_type=care_type)
+        inp = make_inputs(care_type=care_type)
 
         try:
-            monthly = int(calculator.monthly_cost(inp) * factor)
+            monthly = calculator.monthly_cost(inp)
         except Exception:
-            st.error("CalculatorEngine failed.")
+            st.error("CalculatorEngine failed while computing monthly cost.")
             st.code(traceback.format_exc())
             st.stop()
 
-        st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
-        st.session_state.setdefault("person_costs", {})[pid] = monthly
-        total += monthly
+        st.metric("Estimated Monthly Cost", f"${int(monthly):,}")
+        st.session_state["person_costs"][pid] = int(monthly)
+        combined += int(monthly)
         st.divider()
 
     st.subheader("Combined Total")
-    st.metric("Estimated Combined Monthly Cost", f"${total:,.0f}")
+    st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Back to recommendations"):
-            st.session_state.step = "recommendations"; st.rerun()
+            st.session_state.step = "recommendations"
+            st.rerun()
     with c2:
-        if st.button("Add Household & Assets (optional)"):
-            st.session_state.step = "household"; st.rerun()
+        if st.button("Add Household & Assets"):
+            st.session_state.step = "household"
+            st.rerun()
+    with c3:
+        if st.button("Finish"):
+            st.session_state.step = "intro"
+            st.rerun()
 
-# ----- Household drawers (external engine) -----
+# HOUSEHOLD
 elif st.session_state.step == "household":
     st.header("Household & Budget (optional)")
-    st.markdown("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
+    st.caption("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
 
-    if asset_engine and hasattr(asset_engine, "render_household_drawers"):
+    if asset_engine is None:
+        st.error("asset_engine.py not found. Please include it in the repo root.")
+    else:
         try:
-            result = asset_engine.render_household_drawers(st)  # returns a HouseholdResult-like object
-            if result and hasattr(result, "monthly_total"):
-                st.metric("Estimated Monthly Impact (from drawers)", f"${int(result.monthly_total):,}")
+            # Preferred new API
+            if hasattr(asset_engine, "render_household_drawers"):
+                result = asset_engine.render_household_drawers(st)  # returns HouseholdResult
+            # Backward-compat function name
+            elif hasattr(asset_engine, "render_drawers"):
+                result = asset_engine.render_drawers(st)
+            # Class-based API fallback
+            elif hasattr(asset_engine, "HouseholdEngine"):
+                eng = asset_engine.HouseholdEngine()
+                result = eng.render(st)
+            else:
+                raise AttributeError("asset_engine has no recognized render function.")
         except Exception:
             st.error("Household drawers failed.")
             st.code(traceback.format_exc())
-    else:
-        st.info("Household drawers module not available in this build.")
+            result = None
 
-    c1, c2 = st.columns(2)
+        if result is not None and hasattr(result, "to_dict"):
+            with st.expander("Details (for debugging)", expanded=False):
+                st.json(result.to_dict())
+
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Back to Costs"):
-            st.session_state.step = "calculator"; st.rerun()
+            st.session_state.step = "calculator"
+            st.rerun()
     with c2:
+        if st.button("View Detailed Breakdown"):
+            st.session_state.step = "breakdown"
+            st.rerun()
+    with c3:
         if st.button("Finish"):
-            st.session_state.step = "intro"; st.rerun()
+            st.session_state.step = "intro"
+            st.rerun()
+
+# BREAKDOWN
+elif st.session_state.step == "breakdown":
+    st.header("Detailed Breakdown")
+
+    people = st.session_state.get("people", [])
+    costs  = st.session_state.get("person_costs", {})
+
+    care_total = sum(int(costs.get(p["id"], 0)) for p in people)
+
+    s = st.session_state
+    inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
+    inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0))
+    inc_house = int(s.get("hh_rent", 0)) + int(s.get("hh_annuity", 0)) + int(s.get("hh_invest", 0)) + int(s.get("hh_trust", 0)) + int(s.get("hh_other", 0))
+
+    va_A = int(s.get("a_va_monthly", 0))
+    va_B = int(s.get("b_va_monthly", 0))
+
+    home_monthly   = int(s.get("home_monthly_total", 0))
+    mods_monthly   = int(s.get("mods_monthly_total", 0))
+    other_monthly  = int(s.get("other_monthly_total", 0))
+    addl_costs     = home_monthly + mods_monthly + other_monthly
+
+    assets_common  = int(s.get("assets_common_total", 0))
+    assets_detail  = int(s.get("assets_detailed_total", 0))
+    assets_total   = assets_common + assets_detail
+
+    income_total = inc_A + inc_B + inc_house + va_A + va_B
+    monthly_need = care_total + addl_costs
+    gap = monthly_need - income_total
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Monthly Care + Selected Costs", f"${monthly_need:,.0f}")
+    c2.metric("Total Monthly Income (incl. VA)", f"${income_total:,.0f}")
+    c3.metric("Estimated Monthly Gap", f"${gap:,.0f}")
+
+    years = 0.0
+    if gap > 0 and assets_total > 0:
+        years = round(assets_total / max(gap, 1), 1)
+    st.subheader(f"Estimated runway from assets: {years} years")
+
+    st.divider()
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("Back to Household"):
+            st.session_state.step = "household"
+            st.rerun()
+    with b2:
+        if st.button("Back to Costs"):
+            st.session_state.step = "calculator"
+            st.rerun()
+
+# Fallback
+else:
+    reset_all()
+    st.rerun()
