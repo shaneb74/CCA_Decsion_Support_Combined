@@ -10,7 +10,7 @@ import traceback
 import json
 import random
 import time
-from cost_controls import render_costs_for_active_recommendations
+import cost_controls
 
 
 import streamlit as st
@@ -336,40 +336,15 @@ elif st.session_state.step == "recommendations":
 
 # CALCULATOR
 elif st.session_state.step == "calculator":
-    st.header("Cost Planner")
+    st.title("Cost Planner")
 
-    state = st.selectbox("Location", ["National", "Washington", "California", "Texas", "Florida"])
-    factor = {"National": 1.0, "Washington": 1.15, "California": 1.25, "Texas": 0.95, "Florida": 1.05}[state]
+    # ONE shared location selector (persists in session_state)
+    cost_controls.render_location_control()
 
-    combined_total = render_costs_for_active_recommendations()
-    for p in st.session_state.get("people", []):
-        pid = p["id"]
-        name = p["display_name"]
-        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
-        care_type = st.session_state.get("care_overrides", {}).get(pid, rec.care_type)
+    # Per-person scenario controls + combined total (rendered inside)
+    combined_total = cost_controls.render_costs_for_active_recommendations()
 
-        st.subheader(f"{name} — Scenario: {care_type.replace('_', ' ').title()}")
-
-        inp = make_inputs(state=state, care_type=care_type)
-
-        try:
-            if hasattr(calculator, "monthly_cost"):
-                monthly = calculator.monthly_cost(inp)
-            else:
-                monthly = calculator.estimate(getattr(inp, "care_type", "in_home"))
-        except Exception:
-            st.error("CalculatorEngine failed while computing monthly cost.")
-            st.code(traceback.format_exc())
-            st.stop()
-
-        st.metric("Estimated Monthly Cost", f"${int(monthly):,}")
-        st.session_state["person_costs"][pid] = int(monthly)
-        combined += int(monthly)
-        st.divider()
-
-    st.subheader("Combined Total")
-    st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
-
+    # Navigation
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Back to recommendations"):
