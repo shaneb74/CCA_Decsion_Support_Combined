@@ -12,7 +12,6 @@ import random
 import time
 import cost_controls
 
-
 import streamlit as st
 
 # ----------------------- Page config -----------------------
@@ -37,7 +36,6 @@ try:
 except Exception:
     asset_engine = None  # we'll gracefully handle missing/older modules
 
-
 # ----------------------- Utilities -------------------------
 def make_inputs(**kwargs):
     """Create a light object for calculator inputs."""
@@ -46,13 +44,11 @@ def make_inputs(**kwargs):
         setattr(obj, k, v)
     return obj
 
-
 def reset_all():
     for k in list(st.session_state.keys()):
         if not k.startswith("_"):
             del st.session_state[k]
     st.session_state.step = "intro"
-
 
 def _is_intlike(x) -> bool:
     try:
@@ -60,7 +56,6 @@ def _is_intlike(x) -> bool:
         return True
     except Exception:
         return False
-
 
 def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
     """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'.
@@ -84,7 +79,6 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
         st.warning(f"No valid labels generated from {amap}")
     return ordered_keys, labels
 
-
 def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None) -> str | None:
     """Render a radio from a JSON answer map and return the SELECTED KEY (string).
     Handles invalid amap gracefully."""
@@ -106,10 +100,8 @@ def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None)
         st.error(f"Failed to render radio for '{label}': {e}. Using default: {default_key}")
         return default_key
 
-
 def clamp(n, lo, hi):
     return max(lo, min(hi, n))
-
 
 # ----------------------- Load JSONs ------------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
@@ -132,7 +124,6 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-
 # ----------------------- Session init ----------------------
 if "step" not in st.session_state:
     st.session_state.step = "intro"
@@ -140,7 +131,6 @@ if "step" not in st.session_state:
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all)
-
 
 # ----------------------- Steps -----------------------------
 

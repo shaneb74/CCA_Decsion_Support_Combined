@@ -58,6 +58,8 @@ def render_costs_for_active_recommendations():
         "memory_care": "Memory Care",
     }
 
+    # Collect updates without applying them yet
+    updates = {}
     for p in people:
         pid = p["id"]
         name = p["display_name"]
@@ -78,8 +80,8 @@ def render_costs_for_active_recommendations():
             key=f"calc_override_{pid}",
         )
         reverse = {v: k for k, v in nice.items()}
-        scen = reverse.get(label, "none")
-        st.session_state.care_overrides[pid] = scen  # keep in sync with recommendations page
+        new_scen = reverse.get(label, "none")
+        updates[pid] = new_scen
 
         # Pre-fill mobility from planner flags if available
         mobility_prefill = "Independent"
@@ -91,7 +93,7 @@ def render_costs_for_active_recommendations():
                 mobility_prefill = "Assisted"
 
         # Scenario-specific controls
-        if scen in ("assisted_living", "memory_care"):
+        if new_scen in ("assisted_living", "memory_care"):
             # Keep dropdowns (NOT sliders) here
             room = st.selectbox("Room Type", ["Studio", "1 Bedroom", "Shared"], key=f"{pid}_room")
             care_level = st.selectbox("Care Level (staffing intensity)", ["Low", "Medium", "High"], key=f"{pid}_care_level")
@@ -103,7 +105,7 @@ def render_costs_for_active_recommendations():
                 key=f"{pid}_mobility"
             )
             # Estimate base
-            base = 6500 if scen == "assisted_living" else 8500
+            base = 6500 if new_scen == "assisted_living" else 8500
             # Simple modifiers
             care_bump = {"Low": 0, "Medium": 400, "High": 900}[care_level]
             chronic_bump = {"None": 0, "Some": 200, "Multiple/Complex": 600}[chronic]
@@ -111,7 +113,7 @@ def render_costs_for_active_recommendations():
             room_bump = {"Studio": 0, "1 Bedroom": 700, "Shared": -500}[room]
             monthly = int((base + care_bump + chronic_bump + mob_bump + room_bump) * multiplier)
 
-        elif scen == "in_home":
+        elif new_scen == "in_home":
             # Keep sliders here with defaults 4 / 20
             hours = st.slider("Hours per day", min_value=0, max_value=24, value=4, step=1, key=f"{pid}_hours_per_day")
             days  = st.slider("Days per month", min_value=0, max_value=31, value=20, step=1, key=f"{pid}_days_per_month")
@@ -128,8 +130,13 @@ def render_costs_for_active_recommendations():
             monthly = 0
 
         st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
-        st.session_state["person_costs"][pid] = monthly
+        person_costs[pid] = monthly  # Update person_costs directly, safe during render
         combined += monthly
         st.divider()
+
+    # Apply overrides only after all widgets are rendered
+    if st.button("Apply Changes"):
+        for pid, scen in updates.items():
+            st.session_state.care_overrides[pid] = scen
 
     return combined
