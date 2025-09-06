@@ -22,7 +22,7 @@ REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
 # ----------------------- Imports ---------------------------
 try:
-    from engines import PlannerEngine, CalculatorEngine  # user-provided engines.py
+    from engines import PlannerEngine, CalculatorEngine, PlannerResult  # Added PlannerResult to import
 except Exception:
     st.error("Failed to import engines.py")
     st.code(traceback.format_exc())
@@ -80,7 +80,7 @@ def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None)
         idx = keys.index(str(default_key))
     else:
         idx = 0
-    sel_label = st.radio(label, labels, index=idx, key=key, help=help_text)
+    sel_label = st.radio(label, labels, index=idx, key=key, help_text=help_text)
     return keys[labels.index(sel_label)]
 
 
@@ -140,7 +140,7 @@ Choosing senior living or in-home support can feel overwhelming.
         st.rerun()
 
 # AUDIENCE
-elif st.session_state.step == "audience":  # Fixed: Changed = to ==
+elif st.session_state.step == "audience":
     st.header("Who is this plan for?")
     role = st.radio(
         "Select one:",
@@ -227,7 +227,7 @@ elif st.session_state.step == "recommendations":
     for p in st.session_state.get("people", []):
         pid = p["id"]
         name = p["display_name"]
-        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
+        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))  # Line 230
 
         care_type = rec.care_type
         reasons = rec.reasons
