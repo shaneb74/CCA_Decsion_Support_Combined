@@ -10,6 +10,8 @@ import traceback
 import json
 import random
 import time
+from cost_controls import render_costs_for_active_recommendations
+
 
 import streamlit as st
 
@@ -339,7 +341,7 @@ elif st.session_state.step == "calculator":
     state = st.selectbox("Location", ["National", "Washington", "California", "Texas", "Florida"])
     factor = {"National": 1.0, "Washington": 1.15, "California": 1.25, "Texas": 0.95, "Florida": 1.05}[state]
 
-    combined = 0
+    combined_total = render_costs_for_active_recommendations()
     for p in st.session_state.get("people", []):
         pid = p["id"]
         name = p["display_name"]
