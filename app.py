@@ -364,26 +364,24 @@ elif st.session_state.step == "household":
     st.caption("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
 
     if asset_engine is None:
-        st.error("asset_engine.py not found. Please include it in the repo root.")
+        st.warning("The household budgeting feature is unavailable because asset_engine.py is missing or failed to load.")
     else:
         try:
-            if hasattr(asset_engine, "render_household_drawers"):
-                result = asset_engine.render_household_drawers(st)
-            elif hasattr(asset_engine, "render_drawers"):
-                result = asset_engine.render_drawers(st)
-            elif hasattr(asset_engine, "HouseholdEngine"):
-                eng = asset_engine.HouseholdEngine()
-                result = eng.render(st)
+            people = st.session_state.get("people", [])
+            if hasattr(asset_engine, "IncomeAssetsEngine"):
+                engine = asset_engine.IncomeAssetsEngine(calculator=calculator)
+                result = engine.render(people)
             else:
-                raise AttributeError("asset_engine has no recognized render function.")
-        except Exception:
-            st.error("Household drawers failed.")
+                st.warning("The household budgeting feature is unavailable because asset_engine.py lacks a recognized render function.")
+                result = None
+        except Exception as e:
+            st.error(f"Household drawers failed: {str(e)}")
             st.code(traceback.format_exc())
             result = None
 
-        if result is not None and hasattr(result, "to_dict"):
+        if result is not None and hasattr(result, "as_dict"):
             with st.expander("Details (for debugging)", expanded=False):
-                st.json(result.to_dict())
+                st.json(result.as_dict())
 
     c1, c2, c3 = st.columns(3)
     with c1:
