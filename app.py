@@ -203,31 +203,44 @@ elif st.session_state.step == "audience":
         st.session_state.current_person = 0
         st.session_state.planner_results = {}
         st.session_state.person_costs = {}
-        # Transition to interstitial for spouse/partner check if not "Both parents"
-        if role != "Both parents":
-            st.session_state.step = "spouse_interstitial"
-        else:
-            st.session_state.step = "planner"
+        st.session_state.step = "spouse_interstitial"
         st.rerun()
 
 # SPOUSE INTERSTITIAL
 elif st.session_state.step == "spouse_interstitial":
+    primary = st.session_state.get("people", [{"display_name": "Primary"}])[0]["display_name"]
     st.header("Add Spouse or Partner?")
-    st.markdown("Would you like to include a spouse or partner in this plan?")
-    if st.button("Yes, add spouse/partner"):
-        # Add a second person (spouse/partner)
-        name = st.session_state.people[0]["display_name"]
-        spouse_name = st.text_input("Spouse/Partner Name", value=f"{name}'s Partner", key="spouse_name", placeholder="Name")
-        st.session_state.people.append({
-            "id": "B",
-            "display_name": spouse_name,
-            "relationship": "spouse",
-        })
-        st.session_state.step = "planner"
-        st.rerun()
-    if st.button("No, continue with one person"):
-        st.session_state.step = "planner"
-        st.rerun()
+    st.markdown(
+        f"If **{primary}** needs assisted living or memory care, their spouse/partner may also need some in-home help.\n\n"
+        "Would you like to include a spouse/partner in this plan?"
+    )
+
+    add = st.checkbox("Yes, I want to add a spouse/partner", key="care_partner_add", value=False)
+
+    if add:
+        st.text_input(
+            "Spouse/partner name",
+            key="care_partner_name",
+            placeholder="Enter spouse/partner name",
+            value=st.session_state.get("care_partner_name", "")
+        )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(f"No, just plan for {primary}"):
+            st.session_state.step = "planner"
+            st.rerun()
+    with c2:
+        disabled = not st.session_state.get("care_partner_add", False)
+        if st.button("Add spouse/partner and continue", disabled=disabled):
+            spouse_name = st.session_state.get("care_partner_name") or "Spouse/Partner"
+            st.session_state.people.append({
+                "id": "B",
+                "display_name": spouse_name,
+                "relationship": "spouse",
+            })
+            st.session_state.step = "planner"
+            st.rerun()
 
 # PLANNER (per person)
 elif st.session_state.step == "planner":
@@ -336,15 +349,18 @@ elif st.session_state.step == "recommendations":
 
 # CALCULATOR
 elif st.session_state.step == "calculator":
-    st.title("Cost Planner")
+    st.header("Cost Planner")
 
-    # ONE shared location selector (persists in session_state)
-    cost_controls.render_location_control()
+    # ONE location selector, managed inside cost_controls (no duplicates)
+    from cost_controls import render_location_control, render_costs_for_active_recommendations
+    render_location_control()
 
-    # Per-person scenario controls + combined total (rendered inside)
-    combined_total = cost_controls.render_costs_for_active_recommendations()
+    # Per-person cost widgets tied to the active/overridden scenarios
+    combined_total = render_costs_for_active_recommendations()
 
-    # Navigation
+    st.subheader("Combined Total")
+    st.metric("Estimated Combined Monthly Cost", f"${combined_total:,.0f}")
+
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Back to recommendations"):

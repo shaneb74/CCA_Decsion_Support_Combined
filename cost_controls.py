@@ -1,224 +1,135 @@
-# cost_controls.py
-# UI + calculators for scenario costs (In-home, Assisted Living, Memory Care)
+# cost_controls.py  — single source of truth for location + per-person cost widgets
 from __future__ import annotations
-
-import json
-from pathlib import Path
-from typing import Any, Dict, List, Set
-
 import streamlit as st
 
-
-ROOT = Path(__file__).resolve().parent
-CALC_JSON   = ROOT / "senior_care_calculator_v5_full_with_instructions_ui.json"
-OVERLAY_JSON = ROOT / "senior_care_modular_overlay.json"  # optional
-
-
-def _safe_load_json(p: Path, fallback: dict) -> dict:
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return fallback
-
-
-# ---- Load calculator config ----
-_CALC = _safe_load_json(CALC_JSON, {
-    "lookups": {
-        "state_multipliers": {"National": 1.0},
-        "room_type": {"Studio": 4000, "1 Bedroom": 5000, "Shared": 3500},
-        "care_level_adders": {"Low": 300, "Medium": 800, "High": 1500},
-        "mobility_adders": {
-            "facility": {"Low": 0, "Medium": 250, "High": 500},
-            "in_home": {"Low": 0, "Medium": 150, "High": 300},
-        },
-        "chronic_adders": {"None": 0, "Some": 200, "Multiple/Complex": 600},
-        "in_home_care_matrix": {"0": 0, "4": 38, "6": 35, "8": 32, "10": 30, "12": 28, "16": 27, "24": 25},
-    },
-    "settings": {
-        "memory_care_multiplier": 1.25,
-        "days_per_month": 30,
-    },
-})
-_OVERLAY = _safe_load_json(OVERLAY_JSON, {})
-
-_STATE_MULT  = _CALC["lookups"]["state_multipliers"]
-_ROOM_BASE   = _CALC["lookups"]["room_type"]
-_CARE_ADD    = _CALC["lookups"]["care_level_adders"]
-_MOB_ADD     = _CALC["lookups"]["mobility_adders"]
-_CHRONIC_ADD = _CALC["lookups"]["chronic_adders"]
-_INHOME_RATE = _CALC["lookups"]["in_home_care_matrix"]
-_MC_MULT     = float(_CALC["settings"]["memory_care_multiplier"])
-_DAYS_PER_MO = int(_CALC["settings"]["days_per_month"])
-
-
-# ---------- Location control (call exactly once in app.py) ----------
+# ------- Public: Location control (render once) -------
 def render_location_control():
-    """Single shared Location dropdown. Stores selection in st.session_state.cost_state."""
-    if "cost_state" not in st.session_state:
-        st.session_state.cost_state = "National"
-    options = list(_STATE_MULT.keys())
-    idx = options.index(st.session_state.cost_state) if st.session_state.cost_state in options else 0
-    choice = st.selectbox("Location", options, index=idx, key="cost_state")
-    st.session_state.cost_state = choice  # keep persistent
-    return choice
-
-
-def _get_state_multiplier() -> float:
-    label = st.session_state.get("cost_state", "National")
-    try:
-        return float(_STATE_MULT.get(label, 1.0))
-    except Exception:
-        return 1.0
-
-
-# ---------- Flag carryover ----------
-def prefill_mobility_from_flags(flags: Set[str]) -> str:
-    f = set(flags or [])
-    if "high_mobility_dependence" in f:
-        return "High"
-    if "moderate_mobility" in f:
-        return "Medium"
-    return "Low"
-
-
-# ---------- Robust result extractor ----------
-def _extract_result(rec: Any) -> Dict[str, Any]:
-    if rec is None:
-        return {"care_type": "none", "flags": []}
-    if isinstance(rec, dict):
-        return {"care_type": rec.get("care_type", "none"), "flags": list(rec.get("flags", []))}
-    return {"care_type": getattr(rec, "care_type", "none"), "flags": list(getattr(rec, "flags", []) or [])}
-
-
-# ---------- Scenario controls ----------
-def _al_controls(pid: str, name: str, *, state_mult: float, flags: Set[str]) -> int:
-    sk = lambda k: f"al_{pid}_{k}"
-    default_mob = prefill_mobility_from_flags(flags)
-
-    room  = st.selectbox(f"Room type — {name}", list(_ROOM_BASE.keys()),
-                         index=0, key=sk("room"))
-    level = st.selectbox(f"Care level — {name}", list(_CARE_ADD.keys()),
-                         index=list(_CARE_ADD.keys()).index("Medium"), key=sk("care"))
-    mob   = st.selectbox(f"Mobility — {name}", list(_MOB_ADD["facility"].keys()),
-                         index=list(_MOB_ADD["facility"].keys()).index(default_mob), key=sk("mob"))
-    chron = st.selectbox(f"Chronic conditions — {name}", list(_CHRONIC_ADD.keys()),
-                         index=list(_CHRONIC_ADD.keys()).index("Some"), key=sk("chron"))
-
-    base = int(_ROOM_BASE[room])
-    add  = int(_CARE_ADD[level]) + int(_MOB_ADD["facility"][mob]) + int(_CHRONIC_ADD[chron])
-    monthly = int(round((base + add) * state_mult))
-    return monthly
-
-
-def _mc_controls(pid: str, name: str, *, state_mult: float, flags: Set[str]) -> int:
-    sk = lambda k: f"mc_{pid}_{k}"
-    default_mob = prefill_mobility_from_flags(flags)
-
-    room  = st.selectbox(f"Room type — {name}", list(_ROOM_BASE.keys()),
-                         index=0, key=sk("room"))
-    level = st.selectbox(f"Care level — {name}", list(_CARE_ADD.keys()),
-                         index=list(_CARE_ADD.keys()).index("Medium"), key=sk("care"))
-    mob   = st.selectbox(f"Mobility — {name}", list(_MOB_ADD["facility"].keys()),
-                         index=list(_MOB_ADD["facility"].keys()).index(default_mob), key=sk("mob"))
-    chron = st.selectbox(f"Chronic conditions — {name}", list(_CHRONIC_ADD.keys()),
-                         index=list(_CHRONIC_ADD.keys()).index("Multiple/Complex"), key=sk("chron"))
-
-    base = int(round(int(_ROOM_BASE[room]) * _MC_MULT))
-    add  = int(_CARE_ADD[level]) + int(_MOB_ADD["facility"][mob]) + int(_CHRONIC_ADD[chron])
-    monthly = int(round((base + add) * state_mult))
-    return monthly
-
-
-def _ih_controls(pid: str, name: str, *, state_mult: float, flags: Set[str]) -> int:
-    sk = lambda k: f"ih_{pid}_{k}"
-    # Defaults: 4 hrs/day, 20 days/month per your spec
-    hours = st.slider(f"Hours per day — {name}", 0, 24, 4, 1, key=sk("hours"))
-    days  = st.slider(f"Days per month — {name}", 0, _DAYS_PER_MO, 20, 1, key=sk("days"))
-
-    # Rate from matrix (keys are strings)
-    rate = None
-    if str(hours) in _INHOME_RATE:
-        rate = float(_INHOME_RATE[str(hours)])
-    else:
-        # Find closest lower key if exact not present
-        keys_int = sorted(int(k) for k in _INHOME_RATE.keys())
-        lower = max((k for k in keys_int if k <= hours), default=keys_int[0])
-        rate = float(_INHOME_RATE[str(lower)])
-
-    labor = int(round(rate * hours * days))
-    monthly = int(round(labor * state_mult))
-    return monthly
-
-
-# ---------- Public: render costs for the currently active recommendations ----------
-def render_costs_for_active_recommendations() -> int:
     """
-    Renders:
-      - One Location dropdown (assumes app called render_location_control() already)
-      - For each person: scenario selector + relevant controls
-      - Per-person subtotal + Combined total
-
-    Returns combined monthly cost (int).
+    Renders a single, global Location selector and stores it ONLY via the widget key.
+    Returns the selected label and a float multiplier.
     """
-    state_mult = _get_state_multiplier()
+    options = ["National", "Washington", "California", "Texas", "Florida"]
+    multipliers = {
+        "National": 1.00,
+        "Washington": 1.15,
+        "California": 1.25,
+        "Texas": 0.95,
+        "Florida": 1.05,
+    }
+
+    # IMPORTANT: never assign st.session_state.cost_state manually;
+    # let the widget own this key so we don't fight Streamlit.
+    default_idx = 0
+    if "cost_state" in st.session_state and st.session_state["cost_state"] in options:
+        default_idx = options.index(st.session_state["cost_state"])
+
+    choice = st.selectbox(
+        "Location",
+        options,
+        index=default_idx,
+        key="cost_state",  # widget manages the state
+        help="Adjusts typical market rates for the selected state."
+    )
+    return choice, multipliers.get(choice, 1.00)
+
+# ------- Public: Cost controls for active recommendations -------
+def render_costs_for_active_recommendations():
+    """
+    Reads people + recommendations from session_state and renders
+    the per-person cost controls (scenarios and their widgets). 
+    Returns the combined total.
+    """
+    people = st.session_state.get("people", [])
+    recs   = st.session_state.get("planner_results", {})
+    overrides = st.session_state.get("care_overrides", {})
+    person_costs = st.session_state.setdefault("person_costs", {})
+
+    # Location chosen once globally (idempotent — safe to call)
+    state_label = st.session_state.get("cost_state", "National")
+    _, multiplier = render_location_control()
 
     combined = 0
-    people  = st.session_state.get("people", [])
-    results = st.session_state.get("planner_results", {})
 
-    for i, person in enumerate(people):
-        pid   = person.get("id", f"P{i+1}")
-        name  = person.get("display_name", f"Person {i+1}")
-        raw   = results.get(pid)
-        rec   = _extract_result(raw)
-        rec_care = (rec.get("care_type") or "none").strip().lower()
-        flags = set(rec.get("flags", []))
+    # Options display names
+    nice = {
+        "none": "None",
+        "in_home": "In-home Care",
+        "assisted_living": "Assisted Living",
+        "memory_care": "Memory Care",
+    }
 
-        # ---- scenario override (user can choose different scenario) ----
-        override_key = f"scenario_override_{pid}"
-        scenario_options = {
-            "in_home": "In-home Care",
-            "assisted_living": "Assisted Living",
-            "memory_care": "Memory Care",
-            "none": "No plan needed",
-        }
-        reverse_map = {v: k for k, v in scenario_options.items()}
-        default_label = scenario_options.get(rec_care, "No plan needed")
+    for p in people:
+        pid = p["id"]
+        name = p["display_name"]
+        rec = recs.get(pid)
 
-        st.subheader(f"{name} — Scenario: {default_label}")
-        chosen_label = st.selectbox(
+        # derive scenario
+        scen = (overrides.get(pid) or (getattr(rec, "care_type", None) if rec else None) or "none").strip()
+
+        st.subheader(f"{name} — Scenario: {nice.get(scen, scen).title()}")
+
+        # Let user switch scenarios here (e.g., healthy partner → "None" or "In-home")
+        options = ["none", "in_home", "assisted_living", "memory_care"]
+        idx = options.index(scen) if scen in options else 0
+        label = st.selectbox(
             f"Care scenario for {name}",
-            list(scenario_options.values()),
-            index=list(scenario_options.values()).index(default_label),
-            key=override_key,
-            help="You can price a different option without redoing questions.",
+            [nice[o] for o in options],
+            index=idx,
+            key=f"calc_override_{pid}",
         )
-        scen = reverse_map[chosen_label]
+        reverse = {v: k for k, v in nice.items()}
+        scen = reverse.get(label, "none")
+        st.session_state.care_overrides[pid] = scen  # keep in sync with recommendations page
 
-        # ---- scenario-specific controls ----
-        if scen == "assisted_living":
-            monthly = _al_controls(pid, name, state_mult=state_mult, flags=flags)
-        elif scen == "memory_care":
-            monthly = _mc_controls(pid, name, state_mult=state_mult, flags=flags)
+        # Pre-fill mobility from planner flags if available
+        mobility_prefill = "Independent"
+        if rec and hasattr(rec, "flags"):
+            flags = set(rec.flags)
+            if "high_mobility_dependence" in flags:
+                mobility_prefill = "Non-ambulatory"
+            elif "moderate_mobility" in flags:
+                mobility_prefill = "Assisted"
+
+        # Scenario-specific controls
+        if scen in ("assisted_living", "memory_care"):
+            # Keep dropdowns (NOT sliders) here
+            room = st.selectbox("Room Type", ["Studio", "1 Bedroom", "Shared"], key=f"{pid}_room")
+            care_level = st.selectbox("Care Level (staffing intensity)", ["Low", "Medium", "High"], key=f"{pid}_care_level")
+            chronic = st.selectbox("Chronic Conditions", ["None", "Some", "Multiple/Complex"], key=f"{pid}_chronic")
+            mobility = st.selectbox(
+                "Mobility",
+                ["Independent", "Assisted", "Non-ambulatory"],
+                index=["Independent", "Assisted", "Non-ambulatory"].index(mobility_prefill),
+                key=f"{pid}_mobility"
+            )
+            # Estimate base
+            base = 6500 if scen == "assisted_living" else 8500
+            # Simple modifiers
+            care_bump = {"Low": 0, "Medium": 400, "High": 900}[care_level]
+            chronic_bump = {"None": 0, "Some": 200, "Multiple/Complex": 600}[chronic]
+            mob_bump = {"Independent": 0, "Assisted": 200, "Non-ambulatory": 600}[mobility]
+            room_bump = {"Studio": 0, "1 Bedroom": 700, "Shared": -500}[room]
+            monthly = int((base + care_bump + chronic_bump + mob_bump + room_bump) * multiplier)
+
         elif scen == "in_home":
-            monthly = _ih_controls(pid, name, state_mult=state_mult, flags=flags)
-        else:
-            st.caption("No plan needed.")
+            # Keep sliders here with defaults 4 / 20
+            hours = st.slider("Hours per day", min_value=0, max_value=24, value=4, step=1, key=f"{pid}_hours_per_day")
+            days  = st.slider("Days per month", min_value=0, max_value=31, value=20, step=1, key=f"{pid}_days_per_month")
+            mobility = st.selectbox(
+                "Mobility",
+                ["Independent", "Assisted", "Non-ambulatory"],
+                index=["Independent", "Assisted", "Non-ambulatory"].index(mobility_prefill),
+                key=f"{pid}_inhome_mobility"
+            )
+            rate = {"Independent": 28, "Assisted": 32, "Non-ambulatory": 38}[mobility]
+            monthly = int(hours * days * rate * multiplier)
+
+        else:  # none
             monthly = 0
 
-        st.caption("Estimated Monthly Cost")
-        st.markdown(f"### ${monthly:,.0f}")
-        st.markdown("---")
-
-        # Store per-person result in case other pages need it
-        st.session_state.setdefault("cost_estimates", {})
-        st.session_state["cost_estimates"][pid] = {"scenario": scen, "monthly": monthly}
-
+        st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
+        st.session_state["person_costs"][pid] = monthly
         combined += monthly
-
-    st.subheader("Combined Total")
-    st.caption("Estimated Combined Monthly Cost")
-    st.markdown(f"### ${combined:,.0f}")
+        st.divider()
 
     return combined
