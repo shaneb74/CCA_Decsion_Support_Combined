@@ -60,8 +60,10 @@ def _is_intlike(x) -> bool:
 
 
 def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
-    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'."""
+    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'.
+    Logs an error if amap is invalid."""
     if not isinstance(amap, dict) or not amap:
+        st.error(f"Invalid or empty answer map: {amap}")
         return [], []
     keys = list(amap.keys())
     if all(_is_intlike(k) for k in keys):
@@ -73,8 +75,14 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
 
 
 def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None) -> str | None:
+    """Render a radio from a JSON answer map and return the SELECTED KEY (string).
+    Handles invalid amap gracefully."""
+    if not isinstance(amap, dict) or not amap:
+        st.warning(f"Skipping radio for '{label}' due to invalid answer map: {amap}")
+        return default_key
     keys, labels = order_answer_map(amap)
     if not labels:
+        st.warning(f"No valid options for '{label}'")
         return default_key
     if default_key is not None and str(default_key) in keys:
         idx = keys.index(str(default_key))
@@ -188,22 +196,28 @@ elif st.session_state.step == "planner":
     answers = {}
     for q_idx, q in enumerate(planner.qa.get("questions", [])):
         label = q["question"]
-        amap = q["answers"]
+        amap = q.get("answers", {})  # Default to empty dict if missing
+        if not amap:
+            st.warning(f"Question '{label}' has no valid answers, skipping.")
+            continue
         key = f"q{q_idx + 1}_{pid}"  # Person-specific key
         ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))
         if ans:
             answers[f"q{q_idx + 1}"] = int(ans)  # Remap to 1-based qN format
 
     if st.button("Save and continue"):
-        result = planner.run(answers, name=name)
-        st.session_state.planner_results = st.session_state.get("planner_results", {})
-        st.session_state.planner_results[pid] = result.__dict__
-        st.session_state.current_person += 1
-        if st.session_state.current_person >= len(people):
-            st.session_state.step = "recommendations"
+        if not answers:  # Prevent empty submission
+            st.error("No answers provided. Please answer at least one question.")
         else:
-            st.session_state.step = "person_transition"
-        st.rerun()
+            result = planner.run(answers, name=name)
+            st.session_state.planner_results = st.session_state.get("planner_results", {})
+            st.session_state.planner_results[pid] = result.__dict__
+            st.session_state.current_person += 1
+            if st.session_state.current_person >= len(people):
+                st.session_state.step = "recommendations"
+            else:
+                st.session_state.step = "person_transition"
+            st.rerun()
 
 # PERSON TRANSITION
 elif st.session_state.step == "person_transition":
@@ -227,7 +241,7 @@ elif st.session_state.step == "recommendations":
     for p in st.session_state.get("people", []):
         pid = p["id"]
         name = p["display_name"]
-        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))  # Line 230
+        rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
 
         care_type = rec.care_type
         reasons = rec.reasons
