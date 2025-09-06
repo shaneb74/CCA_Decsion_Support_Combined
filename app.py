@@ -343,10 +343,10 @@ elif st.session_state.step == "calculator":
 
     # ONE location selector, managed inside cost_controls (no duplicates)
     from cost_controls import render_location_control, render_costs_for_active_recommendations
-    render_location_control()
+    location_label, multiplier = render_location_control()
 
     # Per-person cost widgets tied to the active/overridden scenarios
-    combined_total = render_costs_for_active_recommendations()
+    combined_total = render_costs_for_active_recommendations(multiplier)
 
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined_total:,.0f}")
@@ -411,7 +411,7 @@ elif st.session_state.step == "breakdown":
     people = st.session_state.get("people", [])
     costs = st.session_state.get("person_costs", {})
 
-    care_total = sum(int(costs.get(p["id"], 0)) for p in people)
+    care_total = sum(int(costs.get(p["id"], 0) for p in people)
 
     s = st.session_state
     inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))

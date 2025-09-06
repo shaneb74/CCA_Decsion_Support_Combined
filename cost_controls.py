@@ -33,7 +33,7 @@ def render_location_control():
     return choice, multipliers.get(choice, 1.00)
 
 # ------- Public: Cost controls for active recommendations -------
-def render_costs_for_active_recommendations():
+def render_costs_for_active_recommendations(multiplier):
     """
     Reads people + recommendations from session_state and renders
     the per-person cost controls (scenarios and their widgets). 
@@ -43,10 +43,6 @@ def render_costs_for_active_recommendations():
     recs   = st.session_state.get("planner_results", {})
     overrides = st.session_state.get("care_overrides", {})
     person_costs = st.session_state.setdefault("person_costs", {})
-
-    # Location chosen once globally (idempotent — safe to call)
-    state_label = st.session_state.get("cost_state", "National")
-    _, multiplier = render_location_control()
 
     combined = 0
 
