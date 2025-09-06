@@ -17,12 +17,12 @@ st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="
 
 # ----------------------- Paths (root) ----------------------
 ROOT = Path(__file__).resolve().parent
-QA_PATH  = ROOT / "question_answer_logic_FINAL_UPDATED.json"
+QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
 # ----------------------- Imports ---------------------------
 try:
-    from engines import PlannerEngine, CalculatorEngine, PlannerResult  # Added PlannerResult to import
+    from engines import PlannerEngine, CalculatorEngine, PlannerResult
 except Exception:
     st.error("Failed to import engines.py")
     st.code(traceback.format_exc())
@@ -30,7 +30,7 @@ except Exception:
 
 # isolate drawers (no UX changes but kept outside app.py)
 try:
-    import asset_engine  # user-provided asset_engine.py
+    import asset_engine
 except Exception:
     asset_engine = None  # we'll gracefully handle missing/older modules
 
@@ -111,7 +111,7 @@ def clamp(n, lo, hi):
 # ----------------------- Load JSONs ------------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
 if missing:
-    st.error("Missing required JSON files:\n" + "\n".join(f"• {m}" for m in missing))
+    st.error("Missing required JSON files:\n" + "\n".join(f"• {m.name}" for m in missing))
     st.stop()
 
 # ----------------------- Engines ---------------------------
@@ -175,17 +175,25 @@ elif st.session_state.step == "audience":
             n1 = st.text_input("Parent 1 name", value="Mom", key="p1_name", placeholder="Name")
         with c2:
             n2 = st.text_input("Parent 2 name", value="Dad", key="p2_name", placeholder="Name")
-        people = [
-            {"id": "A", "display_name": n1, "relationship": "parent"},
-            {"id": "B", "display_name": n2, "relationship": "parent"},
-        ]
+        people.append({
+            "id": "A",
+            "display_name": n1,
+            "relationship": "parent",
+        })
+        people.append({
+            "id": "B",
+            "display_name": n2,
+            "relationship": "parent",
+        })
     else:
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
-        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[
-            role
-        ]
-        people = [{"id": "A", "display_name": n, "relationship": rel}]
+        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[role]
+        people.append({
+            "id": "A",
+            "display_name": n,
+            "relationship": rel,
+        })
 
     if st.button("Continue"):
         st.session_state.people = people
@@ -208,17 +216,17 @@ elif st.session_state.step == "planner":
     answers = {}
     for q_idx, q in enumerate(planner.qa.get("questions", [])):
         label = q["question"]
-        amap = q.get("answers", {})  # Default to empty dict if missing
+        amap = q.get("answers", {})
         if not amap or not isinstance(amap, dict):
             st.warning(f"Skipping question '{label}' due to invalid answers: {amap}")
             continue
-        key = f"q{q_idx + 1}_{pid}"  # Person-specific key
-        ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))  # Keep help_text for future use, but ignore in radio
-        if ans is not None:  # Only add valid answers
-            answers[f"q{q_idx + 1}"] = int(ans)  # Remap to 1-based qN format
+        key = f"q{q_idx + 1}_{pid}"
+        ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))
+        if ans is not None:
+            answers[f"q{q_idx + 1}"] = int(ans)
 
     if st.button("Save and continue"):
-        if not answers:  # Prevent empty submission
+        if not answers:
             st.error("No answers provided. Please answer at least one question.")
         else:
             result = planner.run(answers, name=name)
@@ -272,7 +280,6 @@ elif st.session_state.step == "recommendations":
         if narrative:
             st.info(narrative)
 
-        # allow override
         options = ["none", "in_home", "assisted_living", "memory_care"]
         idx = options.index(care_type) if care_type in options else 1
         label = st.selectbox(
@@ -305,7 +312,6 @@ elif st.session_state.step == "recommendations":
 elif st.session_state.step == "calculator":
     st.header("Cost Planner")
 
-    # simple geographic factor
     state = st.selectbox("Location", ["National", "Washington", "California", "Texas", "Florida"])
     factor = {"National": 1.0, "Washington": 1.15, "California": 1.25, "Texas": 0.95, "Florida": 1.05}[state]
 
@@ -316,9 +322,8 @@ elif st.session_state.step == "calculator":
         rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
         care_type = st.session_state.get("care_overrides", {}).get(pid, rec.care_type)
 
-        st.subheader(f"{name} — Scenario: {care_type.replace('_',' ').title()}")
+        st.subheader(f"{name} — Scenario: {care_type.replace('_', ' ').title()}")
 
-        # Simple inputs; you can extend as needed (room_type, mobility, etc.)
         inp = make_inputs(state=state, care_type=care_type)
 
         try:
@@ -362,13 +367,10 @@ elif st.session_state.step == "household":
         st.error("asset_engine.py not found. Please include it in the repo root.")
     else:
         try:
-            # Preferred new API
             if hasattr(asset_engine, "render_household_drawers"):
-                result = asset_engine.render_household_drawers(st)  # returns HouseholdResult
-            # Backward-compat function name
+                result = asset_engine.render_household_drawers(st)
             elif hasattr(asset_engine, "render_drawers"):
                 result = asset_engine.render_drawers(st)
-            # Class-based API fallback
             elif hasattr(asset_engine, "HouseholdEngine"):
                 eng = asset_engine.HouseholdEngine()
                 result = eng.render(st)
@@ -402,7 +404,7 @@ elif st.session_state.step == "breakdown":
     st.header("Detailed Breakdown")
 
     people = st.session_state.get("people", [])
-    costs  = st.session_state.get("person_costs", {})
+    costs = st.session_state.get("person_costs", {})
 
     care_total = sum(int(costs.get(p["id"], 0)) for p in people)
 
@@ -414,14 +416,14 @@ elif st.session_state.step == "breakdown":
     va_A = int(s.get("a_va_monthly", 0))
     va_B = int(s.get("b_va_monthly", 0))
 
-    home_monthly   = int(s.get("home_monthly_total", 0))
-    mods_monthly   = int(s.get("mods_monthly_total", 0))
-    other_monthly  = int(s.get("other_monthly_total", 0))
-    addl_costs     = home_monthly + mods_monthly + other_monthly
+    home_monthly = int(s.get("home_monthly_total", 0))
+    mods_monthly = int(s.get("mods_monthly_total", 0))
+    other_monthly = int(s.get("other_monthly_total", 0))
+    addl_costs = home_monthly + mods_monthly + other_monthly
 
-    assets_common  = int(s.get("assets_common_total", 0))
-    assets_detail  = int(s.get("assets_detailed_total", 0))
-    assets_total   = assets_common + assets_detail
+    assets_common = int(s.get("assets_common_total", 0))
+    assets_detail = int(s.get("assets_detailed_total", 0))
+    assets_total = assets_common + assets_detail
 
     income_total = inc_A + inc_B + inc_house + va_A + va_B
     monthly_need = care_total + addl_costs
