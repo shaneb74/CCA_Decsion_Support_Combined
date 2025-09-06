@@ -70,6 +70,23 @@ def get_state_multiplier(state_label: str | None) -> float:
     except Exception:
         return 1.0
 
+def _extract_result(rec: Any) -> Dict[str, Any]:
+    """
+    Normalize a planner result that might be a dict *or* a PlannerResult object.
+    Prevents AttributeError when using .get on an object.
+    """
+    if rec is None:
+        return {"care_type": "none", "flags": []}
+    # Dict-like
+    if isinstance(rec, dict):
+        care_type = rec.get("care_type", "none")
+        flags = list(rec.get("flags", []))
+        return {"care_type": care_type, "flags": flags}
+    # Object-like
+    care_type = getattr(rec, "care_type", "none")
+    flags = list(getattr(rec, "flags", []) or [])
+    return {"care_type": care_type, "flags": flags}
+
 
 # ---------- UI blocks for each scenario ----------
 def _al_controls(person_key: str, person_name: str, *, state_mult: float, flags: Set[str]) -> int:
@@ -124,11 +141,9 @@ def _ih_controls(person_key: str, person_name: str, *, state_mult: float, flags:
                              options=list(_CHRONIC_ADD.keys()), value="Some", key=sk("chron"))
 
     # Hourly rate depends on hours/day (matrix keys are strings)
-    # fall back to the highest defined if missing
     if str(hours) in _INHOME_RATE:
         rate = float(_INHOME_RATE[str(hours)])
     else:
-        # get the biggest key numerically
         max_key = max(_INHOME_RATE.keys(), key=lambda k: int(k))
         rate = float(_INHOME_RATE[max_key])
 
@@ -138,16 +153,28 @@ def _ih_controls(person_key: str, person_name: str, *, state_mult: float, flags:
     return monthly
 
 
-def render_costs_for_active_recommendations() -> int:
+def render_costs_for_active_recommendations(*, show_location: bool = True) -> int:
     """
     Draw the Cost Planner section for the currently recommended scenarios.
-    Uses session_state.people and session_state.planner_results (already working in your app).
-    Returns the combined monthly total.
+    - Uses session_state.people and session_state.planner_results.
+    - If your app already renders a Location dropdown, call with show_location=False
+      to avoid a duplicate control. In that case we read the multiplier from
+      st.session_state["cost_state"] (default 'National').
+    Returns: combined monthly total (int).
     """
     # --- Location (state multiplier) ---
-    state_label = st.selectbox("Location", list(_STATE_MULT.keys()),
-                               index=list(_STATE_MULT.keys()).index("National") if "National" in _STATE_MULT else 0,
-                               key="cost_state")
+    if "cost_state" not in st.session_state:
+        # Prime once with National to keep state persistent
+        st.session_state.cost_state = "National"
+
+    if show_location:
+        state_label = st.selectbox("Location", list(_STATE_MULT.keys()),
+                                   index=list(_STATE_MULT.keys()).index(st.session_state.cost_state)
+                                   if st.session_state.cost_state in _STATE_MULT else 0,
+                                   key="cost_state")
+    else:
+        state_label = st.session_state.cost_state
+
     state_mult  = get_state_multiplier(state_label)
 
     combined = 0
@@ -157,8 +184,10 @@ def render_costs_for_active_recommendations() -> int:
     for i, person in enumerate(people):
         pid   = person.get("id", f"P{i+1}")           # "A" / "B"
         name  = person.get("display_name", f"Person {i+1}")
-        rec   = results.get(pid, {})
-        scen  = (rec.get("care_type") or "none").strip()
+        raw   = results.get(pid)
+        rec   = _extract_result(raw)                  # <-- robust normalize (fixes your AttributeError)
+        care  = (rec.get("care_type") or "none")
+        scen  = str(care).strip().lower()
         flags = set(rec.get("flags", []))
 
         st.subheader(f"{name} — Scenario: {scen.replace('_',' ').title()}")
