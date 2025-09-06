@@ -66,11 +66,19 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
         st.error(f"Invalid or empty answer map: {amap}")
         return [], []
     keys = list(amap.keys())
+    if not all(isinstance(k, str) for k in keys):
+        st.error(f"Answer map keys must be strings: {amap}")
+        return [], []
+    if not all(isinstance(amap[k], str) for k in keys):
+        st.error(f"Answer map values must be strings: {amap}")
+        return [], []
     if all(_is_intlike(k) for k in keys):
         ordered_keys = [str(k) for k in sorted(int(str(k)) for k in keys)]
     else:
         ordered_keys = [str(k) for k in keys]  # preserve JSON insertion order
     labels = [amap[k] for k in ordered_keys]
+    if not labels:
+        st.warning(f"No valid labels generated from {amap}")
     return ordered_keys, labels
 
 
@@ -82,14 +90,18 @@ def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None)
         return default_key
     keys, labels = order_answer_map(amap)
     if not labels:
-        st.warning(f"No valid options for '{label}'")
+        st.warning(f"No valid options for '{label}', using default: {default_key}")
         return default_key
     if default_key is not None and str(default_key) in keys:
         idx = keys.index(str(default_key))
     else:
         idx = 0
-    sel_label = st.radio(label, labels, index=idx, key=key, help_text=help_text)
-    return keys[labels.index(sel_label)]
+    try:
+        sel_label = st.radio(label, labels, index=idx, key=key, help_text=help_text)
+        return keys[labels.index(sel_label)]
+    except Exception as e:
+        st.error(f"Failed to render radio for '{label}': {e}. Using default: {default_key}")
+        return default_key
 
 
 def clamp(n, lo, hi):
@@ -197,12 +209,12 @@ elif st.session_state.step == "planner":
     for q_idx, q in enumerate(planner.qa.get("questions", [])):
         label = q["question"]
         amap = q.get("answers", {})  # Default to empty dict if missing
-        if not amap:
-            st.warning(f"Question '{label}' has no valid answers, skipping.")
+        if not amap or not isinstance(amap, dict):
+            st.warning(f"Skipping question '{label}' due to invalid answers: {amap}")
             continue
         key = f"q{q_idx + 1}_{pid}"  # Person-specific key
         ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))
-        if ans:
+        if ans is not None:  # Only add valid answers
             answers[f"q{q_idx + 1}"] = int(ans)  # Remap to 1-based qN format
 
     if st.button("Save and continue"):
