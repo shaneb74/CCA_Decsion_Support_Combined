@@ -140,7 +140,7 @@ Choosing senior living or in-home support can feel overwhelming.
         st.rerun()
 
 # AUDIENCE
-elif st.session_state.step = "audience":
+elif st.session_state.step == "audience":  # Fixed: Changed = to ==
     st.header("Who is this plan for?")
     role = st.radio(
         "Select one:",
@@ -162,7 +162,9 @@ elif st.session_state.step = "audience":
     else:
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
-        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[role]
+        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[
+            role
+        ]
         people = [{"id": "A", "display_name": n, "relationship": rel}]
 
     if st.button("Continue"):
@@ -178,24 +180,24 @@ elif st.session_state.step == "planner":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
     p = people[i]
-    pid = p["id"]
-    name = p["display_name"]
+    pid, name = p["id"], p["display_name"]
 
     st.header(f"Care Assessment for {name}")
     st.markdown("Answer these quick questions to get a personalized recommendation.")
 
-    a_ss = []
+    answers = {}
     for q_idx, q in enumerate(planner.qa.get("questions", [])):
         label = q["question"]
         amap = q["answers"]
-        key = f"q{q_idx}"
-        ans = radio_from_answer_map(label, amap, key=key)
-        a_ss.append(ans)
+        key = f"q{q_idx + 1}_{pid}"  # Person-specific key
+        ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))
+        if ans:
+            answers[f"q{q_idx + 1}"] = int(ans)  # Remap to 1-based qN format
 
     if st.button("Save and continue"):
-        answers = {f"q{q_idx}": int(a) for q_idx, a in enumerate(a_ss) if a is not None}
         result = planner.run(answers, name=name)
-        st.session_state.planner_results[pid] = result
+        st.session_state.planner_results = st.session_state.get("planner_results", {})
+        st.session_state.planner_results[pid] = result.__dict__
         st.session_state.current_person += 1
         if st.session_state.current_person >= len(people):
             st.session_state.step = "recommendations"
@@ -276,6 +278,11 @@ elif st.session_state.step == "recommendations":
 # CALCULATOR
 elif st.session_state.step == "calculator":
     st.header("Cost Planner")
+
+    # simple geographic factor
+    state = st.selectbox("Location", ["National", "Washington", "California", "Texas", "Florida"])
+    factor = {"National": 1.0, "Washington": 1.15, "California": 1.25, "Texas": 0.95, "Florida": 1.05}[state]
+
     combined = 0
     for p in st.session_state.get("people", []):
         pid = p["id"]
@@ -283,10 +290,16 @@ elif st.session_state.step == "calculator":
         rec = st.session_state.planner_results.get(pid, PlannerResult("in_home", [], {}, [], "", None))
         care_type = st.session_state.get("care_overrides", {}).get(pid, rec.care_type)
 
-        inp = make_inputs(care_type=care_type)
+        st.subheader(f"{name} — Scenario: {care_type.replace('_',' ').title()}")
+
+        # Simple inputs; you can extend as needed (room_type, mobility, etc.)
+        inp = make_inputs(state=state, care_type=care_type)
 
         try:
-            monthly = calculator.monthly_cost(inp)
+            if hasattr(calculator, "monthly_cost"):
+                monthly = calculator.monthly_cost(inp)
+            else:
+                monthly = calculator.estimate(getattr(inp, "care_type", "in_home"))
         except Exception:
             st.error("CalculatorEngine failed while computing monthly cost.")
             st.code(traceback.format_exc())
@@ -314,7 +327,7 @@ elif st.session_state.step == "calculator":
             st.session_state.step = "intro"
             st.rerun()
 
-# HOUSEHOLD
+# HOUSEHOLD (delegated to asset_engine for the drawers)
 elif st.session_state.step == "household":
     st.header("Household & Budget (optional)")
     st.caption("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
@@ -358,7 +371,7 @@ elif st.session_state.step == "household":
             st.session_state.step = "intro"
             st.rerun()
 
-# BREAKDOWN
+# BREAKDOWN (lightweight numeric — charts removed to avoid runtime deps)
 elif st.session_state.step == "breakdown":
     st.header("Detailed Breakdown")
 
