@@ -231,7 +231,7 @@ elif st.session_state.step == "planner":
         else:
             result = planner.run(answers, name=name)
             st.session_state.planner_results = st.session_state.get("planner_results", {})
-            st.session_state.planner_results[pid] = result.__dict__
+            st.session_state.planner_results[pid] = result  # Store the object, not __dict__
             st.session_state.current_person += 1
             if st.session_state.current_person >= len(people):
                 st.session_state.step = "recommendations"
