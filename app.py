@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import traceback
 import json
 import random
+import time
 
 import streamlit as st
 
@@ -200,6 +201,29 @@ elif st.session_state.step == "audience":
         st.session_state.current_person = 0
         st.session_state.planner_results = {}
         st.session_state.person_costs = {}
+        # Transition to interstitial for spouse/partner check if not "Both parents"
+        if role != "Both parents":
+            st.session_state.step = "spouse_interstitial"
+        else:
+            st.session_state.step = "planner"
+        st.rerun()
+
+# SPOUSE INTERSTITIAL
+elif st.session_state.step == "spouse_interstitial":
+    st.header("Add Spouse or Partner?")
+    st.markdown("Would you like to include a spouse or partner in this plan?")
+    if st.button("Yes, add spouse/partner"):
+        # Add a second person (spouse/partner)
+        name = st.session_state.people[0]["display_name"]
+        spouse_name = st.text_input("Spouse/Partner Name", value=f"{name}'s Partner", key="spouse_name", placeholder="Name")
+        st.session_state.people.append({
+            "id": "B",
+            "display_name": spouse_name,
+            "relationship": "spouse",
+        })
+        st.session_state.step = "planner"
+        st.rerun()
+    if st.button("No, continue with one person"):
         st.session_state.step = "planner"
         st.rerun()
 
