@@ -97,7 +97,7 @@ def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None)
     else:
         idx = 0
     try:
-        sel_label = st.radio(label, labels, index=idx, key=key, help_text=help_text)
+        sel_label = st.radio(label, labels, index=idx, key=key)  # Removed help_text
         return keys[labels.index(sel_label)]
     except Exception as e:
         st.error(f"Failed to render radio for '{label}': {e}. Using default: {default_key}")
@@ -213,7 +213,7 @@ elif st.session_state.step == "planner":
             st.warning(f"Skipping question '{label}' due to invalid answers: {amap}")
             continue
         key = f"q{q_idx + 1}_{pid}"  # Person-specific key
-        ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))
+        ans = radio_from_answer_map(label, amap, key=key, help_text=q.get("help_text"))  # Keep help_text for future use, but ignore in radio
         if ans is not None:  # Only add valid answers
             answers[f"q{q_idx + 1}"] = int(ans)  # Remap to 1-based qN format
 
