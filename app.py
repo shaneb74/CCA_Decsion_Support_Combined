@@ -411,7 +411,7 @@ elif st.session_state.step == "breakdown":
     people = st.session_state.get("people", [])
     costs = st.session_state.get("person_costs", {})
 
-    care_total = sum(int(costs.get(p["id"], 0) for p in people)
+    care_total = sum(int(costs.get(p["id"], 0)) for p in people)
 
     s = st.session_state
     inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
