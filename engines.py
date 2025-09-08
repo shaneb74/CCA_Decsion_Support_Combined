@@ -1,4 +1,4 @@
-# engines.py — Self-contained planner/calculator engines with robust flagging & strict rule matching
+# engines.py — Self-contained planner/calculator engines with robust flagging & tolerant rule names
 from __future__ import annotations
 
 import json
@@ -62,8 +62,6 @@ class PlannerEngine:
         # Flag → category map for scoring, with a safe fallback
         self.flag_to_cat: Dict[str, str] = self.rec.get("flag_to_category_mapping", {}) or {}
         if not self.flag_to_cat:
-            # Conservative inference (keeps you off all-zero scoring if mapping omitted)
-            # You can extend this as needed; unknowns fall into "home_safety"
             self.flag_to_cat = {
                 "high_dependence": "care_burden",
                 "moderate_dependence": "care_burden",
@@ -92,9 +90,9 @@ class PlannerEngine:
             }
 
         # Scoring tables must exist
-        self.score_inhome: Dict[str, int] = (self.rec.get("scoring", {}) or {}).get("in_home", {}) or {}
-        self.score_al: Dict[str, int]     = (self.rec.get("scoring", {}) or {}).get("assisted_living", {}) or {}
-        # If scoring is missing, keep sane defaults to avoid “no_care_needed” dominating
+        scoring = self.rec.get("scoring", {}) or {}
+        self.score_inhome: Dict[str, int] = scoring.get("in_home", {}) or {}
+        self.score_al: Dict[str, int]     = scoring.get("assisted_living", {}) or {}
         if not self.score_inhome:
             self.score_inhome = {k: 1 for k in set(self.flag_to_cat.values())}
         if not self.score_al:
@@ -126,7 +124,6 @@ class PlannerEngine:
         flags: Set[str] = set()
         trace: List[str] = []
 
-        # Walk questions 1..N, not 0..N-1
         for idx, q in enumerate(self.qa.get("questions", []), start=1):
             qkey = f"q{idx}"
             ans_val = answers.get(qkey, None)
@@ -137,7 +134,6 @@ class PlannerEngine:
             if not isinstance(trig, dict):
                 continue
 
-            # Each trigger category has a list of patterns {answer, flag}
             for _cat, tlist in trig.items():
                 if not isinstance(tlist, list):
                     continue
@@ -149,7 +145,6 @@ class PlannerEngine:
                                 flags.add(fl)
                                 trace.append(f"{qkey}={ans_val} → flag '{fl}'")
                     except Exception:
-                        # if JSON contained non-int 'answer', ignore gracefully
                         continue
 
         # Map flags → scoring categories
@@ -167,7 +162,6 @@ class PlannerEngine:
         scores = {"in_home_score": in_home_score, "assisted_living_score": al_score}
         trace.append(f"scores: in_home={in_home_score}, assisted_living={al_score}")
 
-        # Quick visibility on high-severity flags
         for hard_flag in ("severe_cognitive_risk", "high_safety_concern", "high_dependence", "no_support"):
             if hard_flag in flags:
                 trace.append(f"hard-flag: {hard_flag}")
@@ -176,8 +170,7 @@ class PlannerEngine:
 
     def _decide(self, flags: Set[str], scores: Dict[str, int]) -> Tuple[str, str]:
         """
-        Strict, precedence-driven selector.
-        Unknown rules DO NOT match by default (prevents “always-true”).
+        Strict, precedence-driven selector with tolerant rule-name heuristics.
         """
         f = flags
         s = scores
@@ -189,7 +182,7 @@ class PlannerEngine:
         def has_all(*need: str) -> bool: return all(n in f for n in need)
         def has_none(*ban: str) -> bool: return all(n not in f for n in ban)
 
-        # Safety net: obvious memory care override
+        # Hard override
         if "severe_cognitive_risk" in f and has_any("no_support", "high_safety_concern"):
             return "memory_care_override", "memory_care"
 
@@ -197,10 +190,10 @@ class PlannerEngine:
             meta = self.rules.get(rule, {})
             if not meta:
                 continue
-
-            # Handlers for named rules (aligns with your JSON names)
+            rname = rule.lower()
             matched = False
 
+            # Explicit handlers (match exact known keys)
             if rule == "dependence_flag_logic":
                 to_count = meta.get("trigger_if_flags", [
                     "high_dependence", "high_mobility_dependence", "no_support",
@@ -267,25 +260,42 @@ class PlannerEngine:
                 )
 
             else:
-                # Unknown rule names: DO NOT match by default (prevents accidental “always-true”)
-                matched = False
+                # ---------- Tolerant heuristics for rule-name variants ----------
+                # Assisted living family (e.g., "assisted_living", "assisted_living_recommendation", "al_something")
+                if "assisted" in rname or rname.startswith("al_"):
+                    matched = (s["assisted_living_score"] >= al_min)
+
+                # Generic in-home family (avoid matching *_fallback here)
+                elif rname.startswith("in_home") and "fallback" not in rname:
+                    matched = (s["in_home_score"] >= in_min)
+
+                # Independent / no-care family
+                elif "no_care" in rname or "independent" in rname:
+                    matched = (
+                        s["assisted_living_score"] < in_min and
+                        s["in_home_score"] < in_min and
+                        has_none("high_dependence", "high_mobility_dependence", "no_support",
+                                 "severe_cognitive_risk", "high_safety_concern",
+                                 "moderate_cognitive_decline", "moderate_safety_concern", "high_risk")
+                    )
+                # else: leave matched=False
 
             if matched:
                 outcome = meta.get("outcome")
                 if not outcome:
-                    # Infer outcome from rule name if author omitted it
-                    r = rule.lower()
-                    if "memory" in r:
+                    if "memory" in rname:
                         outcome = "memory_care"
-                    elif "assisted" in r or "al_" in r:
+                    elif "assisted" in rname or rname.startswith("al_"):
                         outcome = "assisted_living"
-                    elif "no_care" in r or "independent" in r:
+                    elif "no_care" in rname or "independent" in rname:
                         outcome = "none"
+                    elif rname.startswith("in_home"):
+                        outcome = "in_home"
                     else:
                         outcome = "in_home"
                 return rule, outcome
 
-        # If nothing matched, choose an explicit fallback when present
+        # Explicit fallback
         if "in_home_with_support_fallback" in self.rules:
             return "in_home_with_support_fallback", "in_home"
         return "no_care_needed", "none"
@@ -348,10 +358,6 @@ class PlannerEngine:
 # --------------------------- Convenience for app.py ---------------------------
 
 def resolve_narrative(rec_block: Dict[str, Any]) -> str:
-    """
-    Backward-compatible helper for older app code that expects to pull a message
-    from a result dict. Use with PlannerResult.__dict__ or your stored dict.
-    """
     return (
         rec_block.get("narrative")
         or rec_block.get("advisory")
@@ -365,17 +371,11 @@ def resolve_narrative(rec_block: Dict[str, Any]) -> str:
 # --------------------------- Calculator Engine (unchanged API) ---------------------------
 
 class CalculatorEngine:
-    """
-    Very light placeholder. Your real pricing logic can replace this
-    without changing the call sites in app.py or cost_controls.py.
-    """
     def __init__(self, *args, **kwargs):
         pass
 
     def monthly_cost(self, inputs: Any) -> int:
         care_type = getattr(inputs, "care_type", "in_home")
-        # Simple baselines; your cost engine likely multiplies by state factors,
-        # care level, mobility, chronic conditions, hours/days, etc.
         base = {
             "none": 0,
             "in_home": 4000,
