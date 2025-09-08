@@ -1,278 +1,214 @@
-# engines.py — Planner & Cost engines (self-contained, JSON-driven)
+# engines.py — Planner (JSON-driven) + Calculator (engines own all math)
 from __future__ import annotations
 
 import json
 import random
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
 
-
-# ----------------------------- Data models -----------------------------
 
 @dataclass
 class PlannerResult:
-    """Stable, pickle-safe result object returned by PlannerEngine.run()."""
-    care_type: str                         # "none" | "in_home" | "assisted_living" | "memory_care"
-    flags: List[str]                       # triggered flag ids
-    scores: Dict[str, int]                 # {"in_home_score": int, "assisted_living_score": int}
-    reasons: List[str]                     # human-readable trace of how we got here
-    narrative: str                         # rendered contextual blurb
-    raw_rule: Optional[str] = None         # which JSON rule matched (from decision_precedence)
+    care_type: str                    # "none" | "in_home" | "assisted_living" | "memory_care"
+    flags: List[str]
+    scores: Dict[str, int]
+    reasons: List[str]
+    narrative: str
+    raw_rule: Optional[str] = None
 
-
-# ----------------------------- Planner Engine -----------------------------
 
 class PlannerEngine:
     """
-    Loads your Q&A JSON and Recommendation JSON, evaluates answers -> flags,
-    maps flags to scoring categories, then walks JSON decision_precedence to
-    produce a care recommendation and narrative.
+    Self-contained, JSON-driven recommendation logic.
+    - Reads Q&A triggers from QA JSON (root)
+    - Reads scoring & rules from recommendation JSON (root)
+    - Returns PlannerResult with narrative rendered from templates
     """
-
-    # --- construction ---
-
-    def __init__(self, qa_path: str | Path, rec_path: str | Path):
+    def __init__(self, qa_path: str, rec_path: str):
         with open(qa_path, "r", encoding="utf-8") as f:
             self.qa = json.load(f)
         with open(rec_path, "r", encoding="utf-8") as f:
             self.rec = json.load(f)
 
-        # Rules (unordered dict) + precedence (ordered list of rule names)
         self.rules: Dict[str, Dict[str, Any]] = self.rec.get("final_recommendation", {})
-        self.precedence: List[str] = self.rec.get(
-            "decision_precedence",
-            list(self.rules.keys())
-        )
+        self.precedence: List[str] = self.rec.get("decision_precedence", list(self.rules.keys()))
 
-        # Thresholds (support ints or strings like ">= 6")
+        # thresholds (accept ints or strings like ">= 6")
+        self.in_home_min = 3
+        self.al_min = 6
+        self.dep_min = 2
         th = self.rec.get("final_decision_thresholds", {})
-        self.in_min = self._num(th.get("in_home_min"), 3)
-        self.al_min = self._num(th.get("assisted_living_min"), 6)
-        self.dep_min = self._num(th.get("dependence_flags_min"), 2)
+        self.in_home_min = self._num(th.get("in_home_min"), self.in_home_min)
+        self.al_min = self._num(th.get("assisted_living_min"), self.al_min)
+        self.dep_min = self._num(th.get("dependence_flags_min"), self.dep_min)
 
-        # Dependence flags list if present
-        self.dep_flags: List[str] = (
-            self.rec.get("dependence_flag_logic", {}).get(
-                "trigger_if_flags",
-                ["high_dependence", "high_mobility_dependence", "no_support",
-                 "severe_cognitive_risk", "high_safety_concern"]
-            )
-        )
-
-        # Map flags -> scoring categories
-        self.flag_to_cat: Dict[str, str] = self.rec.get("flag_to_category_mapping", {})
-
-        # Scoring tables
-        self.score_in_home: Dict[str, int] = self.rec.get("scoring", {}).get("in_home", {})
-        self.score_al: Dict[str, int] = self.rec.get("scoring", {}).get("assisted_living", {})
-
-    @staticmethod
-    def _num(v: Any, default: int) -> int:
-        if isinstance(v, (int, float)):
-            return int(v)
+    def _num(self, v, default):
+        if isinstance(v, (int, float)): return int(v)
         if isinstance(v, str):
             m = re.search(r"(\d+)", v)
             if m:
                 return int(m.group(1))
         return default
 
-    # --- public API ---
-
+    # -------- public API --------
     def run(self, answers: Dict[str, int], *, name: str = "You") -> PlannerResult:
-        """
-        Answers are 1-based keys saved by the UI: {"q1": 2, "q2": 1, ...}.
-        """
-        flags, scores, trace = self._evaluate(answers)
-        rule, outcome = self._decide(flags, scores)
-        narrative = self._render(rule, outcome, flags, scores, name)
-
+        flags, scores, debug = self._evaluate(answers)
+        rule_name, outcome = self._decide(flags, scores)
+        narrative = self._render(rule_name, flags, scores, name)
         return PlannerResult(
             care_type=outcome,
             flags=sorted(flags),
             scores=scores,
-            reasons=trace,
+            reasons=debug,
             narrative=narrative,
-            raw_rule=rule,
+            raw_rule=rule_name,
         )
 
-    # --- evaluation: answers -> flags -> scores ---
-
+    # -------- internals --------
     def _evaluate(self, answers: Dict[str, int]) -> Tuple[Set[str], Dict[str, int], List[str]]:
+        """Turn raw answers into flags + scores using JSON triggers + flag_to_category_mapping."""
         flags: Set[str] = set()
-        trace: List[str] = []
+        debug: List[str] = []
 
-        # Walk questions in 1-based order to match UI
+        # IMPORTANT: questions are 1-based (q1..qN)
         for idx, q in enumerate(self.qa.get("questions", []), start=1):
             qk = f"q{idx}"
             a = answers.get(qk)
             if a is None:
                 continue
-
-            # Triggers can be grouped by category, but we accept any level
-            triggers = q.get("trigger", {})
-            for _cat, tlist in triggers.items():
+            for _cat, tlist in (q.get("trigger", {}) or {}).items():
                 for t in tlist:
-                    try:
-                        want = int(t.get("answer"))
-                    except Exception:
-                        continue
-                    if want == int(a):
+                    if "answer" in t and int(t["answer"]) == int(a):
                         fl = t.get("flag")
                         if fl:
                             flags.add(fl)
-                            trace.append(f"{qk}={a} → flag {fl}")
+                            debug.append(f"{qk}={a} → flag {fl}")
 
-        # Map flags -> scoring categories
-        cats: Set[str] = set()
+        # Map flags → categories for scoring
+        cat_map: Dict[str, str] = self.rec.get("flag_to_category_mapping", {})
+        triggered_categories: Set[str] = set()
         for fl in flags:
-            cat = self.flag_to_cat.get(fl)
-            if cat:
-                cats.add(cat)
-        if cats:
-            trace.append(f"categories: {sorted(cats)}")
+            if fl in cat_map:
+                triggered_categories.add(cat_map[fl])
 
-        # Sum scores per category
-        in_score = sum(self.score_in_home.get(c, 0) for c in cats)
-        al_score = sum(self.score_al.get(c, 0) for c in cats)
-        scores = {"in_home_score": in_score, "assisted_living_score": al_score}
-        trace.append(f"scores: in_home={in_score} al={al_score}")
+        if triggered_categories:
+            debug.append(f"categories: {sorted(triggered_categories)}")
 
-        return flags, scores, trace
+        in_home_score = sum(self.rec["scoring"]["in_home"].get(c, 0) for c in triggered_categories)
+        al_score      = sum(self.rec["scoring"]["assisted_living"].get(c, 0) for c in triggered_categories)
 
-    # --- decision: obey JSON precedence strictly ---
+        scores = {"in_home_score": in_home_score, "assisted_living_score": al_score}
+        debug.append(f"scores: in_home={in_home_score} al={al_score}")
+        return flags, scores, debug
 
     def _decide(self, flags: Set[str], scores: Dict[str, int]) -> Tuple[str, str]:
-        """
-        Walk decision_precedence and pick the *first* rule whose criteria match.
-        IMPORTANT: Unknown rules DO NOT match anymore (no silent True).
-        """
-        # Quick hard override for severe memory + no support/high safety concern
-        if "severe_cognitive_risk" in flags and (
-            "no_support" in flags or "high_safety_concern" in flags
-        ):
+        """Walk precedence and pick the first matching rule; infer outcome when omitted."""
+        ctx = {"in_min": self.in_home_min, "al_min": self.al_min, "dep_min": self.dep_min}
+
+        def any_of(*need: str) -> bool: return any(n in flags for n in need)
+        def none_of(*ban: str) -> bool: return all(n not in flags for n in ban)
+
+        # Strong, explicit early override for memory care, if JSON expects it
+        if "severe_cognitive_risk" in flags and any_of("no_support", "high_safety_concern"):
             return "memory_care_override", "memory_care"
 
         for rule in self.precedence:
             meta = self.rules.get(rule)
             if not meta:
-                # Unknown name in precedence; skip
                 continue
-            if self._match_rule(rule, meta, flags, scores):
-                # Outcome may be omitted in JSON; infer from rule name if necessary
+            if self._match(rule, meta, ctx, flags, scores):
                 outcome = meta.get("outcome")
                 if not outcome:
-                    outcome = self._infer_outcome_from_name(rule, default="in_home")
+                    r = rule.lower()
+                    if "memory" in r: outcome = "memory_care"
+                    elif "assisted" in r or "al_" in r: outcome = "assisted_living"
+                    elif "no_care" in r or "none" in r: outcome = "none"
+                    else: outcome = "in_home"
                 return rule, outcome
 
-        # If nothing matched, use the JSON fallback if present
+        # Fallbacks
         if "in_home_with_support_fallback" in self.rules:
             return "in_home_with_support_fallback", "in_home"
-        # absolute fallback
         return "no_care_needed", "none"
 
-    def _match_rule(self, rule: str, meta: Dict[str, Any], flags: Set[str], scores: Dict[str, int]) -> bool:
-        """Return True iff this rule's criteria match. Unknown rules -> False."""
+    def _match(self, rule_name: str, meta: Dict[str, Any], ctx: Dict[str, Any],
+               flags: Set[str], scores: Dict[str, int]) -> bool:
+        """Custom handlers for rule names we know; otherwise allow the rule."""
         f = flags
         s = scores
-        in_min, al_min, dep_min = self.in_min, self.al_min, self.dep_min
+        in_min = ctx["in_min"]; al_min = ctx["al_min"]; dep_min = ctx["dep_min"]
 
         def any_of(*need: str) -> bool: return any(n in f for n in need)
         def all_of(*need: str) -> bool: return all(n in f for n in need)
         def none_of(*ban: str) -> bool: return all(n not in f for n in ban)
 
-        # Handle the rule names we know from your JSON
-        if rule == "memory_care_override":
-            return ("severe_cognitive_risk" in f) and any_of("no_support", "high_safety_concern")
-
-        if rule == "dependence_flag_logic":
-            count = sum(1 for fl in self.dep_flags if fl in f)
+        if rule_name == "dependence_flag_logic":
+            to_count = self.rec.get("dependence_flag_logic", {}).get(
+                "trigger_if_flags",
+                ["high_dependence", "high_mobility_dependence", "no_support",
+                 "severe_cognitive_risk", "high_safety_concern"]
+            )
+            count = sum(1 for fl in to_count if fl in f)
             return count >= dep_min
 
-        if rule == "assisted_living_score":
+        if rule_name == "assisted_living_score":
             return s["assisted_living_score"] >= al_min
 
-        if rule == "balanced_al":
+        if rule_name == "balanced_al":
             return (s["assisted_living_score"] >= al_min and
                     s["in_home_score"] >= in_min and
                     none_of("high_dependence", "high_mobility_dependence", "no_support",
                             "high_safety_concern", "severe_cognitive_risk"))
 
-        if rule == "in_home_with_mobility_challenges":
+        if rule_name == "in_home_with_mobility_challenges":
             return (s["assisted_living_score"] >= al_min - 1 and
                     s["in_home_score"] >= in_min and
-                    ("high_mobility_dependence" in f) and
+                    "high_mobility_dependence" in f and
                     none_of("moderate_cognitive_decline", "severe_cognitive_risk"))
 
-        if rule == "in_home_possible_with_cognitive_and_safety_risks":
+        if rule_name == "in_home_possible_with_cognitive_and_safety_risks":
             return (s["in_home_score"] >= in_min and
                     s["assisted_living_score"] >= in_min and
                     any_of("moderate_cognitive_decline", "severe_cognitive_risk",
                            "moderate_safety_concern", "high_safety_concern"))
 
-        if rule == "in_home_with_support_and_financial_needs":
-            return (s["in_home_score"] >= in_min and
-                    s["assisted_living_score"] < al_min and
-                    "needs_financial_assistance" in f)
-
-        if rule == "independent_with_safety_concern":
-            return (none_of("moderate_cognitive_decline", "severe_cognitive_risk",
-                            "high_dependence", "high_mobility_dependence") and
-                    any_of("moderate_safety_concern", "high_safety_concern"))
-
-        if rule == "independent_no_support_risk":
-            return (none_of("moderate_cognitive_decline", "severe_cognitive_risk",
-                            "high_mobility_dependence") and
-                    ("no_support" in f))
-
-        if rule == "no_care_needed":
+        if rule_name == "no_care_needed":
             return (s["assisted_living_score"] < in_min and
                     s["in_home_score"] < in_min and
                     none_of("high_dependence", "high_mobility_dependence", "no_support",
                             "severe_cognitive_risk", "high_safety_concern",
                             "moderate_cognitive_decline", "moderate_safety_concern", "high_risk"))
 
-        # Heuristic support for additional/renamed rules **without** becoming permissive:
-        r = rule.lower()
-        if "assisted" in r:
-            # Any AL-typed rule must at least clear AL threshold.
-            return s["assisted_living_score"] >= al_min
-        if "in_home" in r and "fallback" not in r:
-            # Any in-home typed rule must at least clear in-home threshold.
-            return s["in_home_score"] >= in_min
-        if "memory" in r:
-            # Memory-typed rules require severe risk (keeps us conservative).
-            return ("severe_cognitive_risk" in f)
+        # Unknown rules: allow, so they can still render their message/outcome
+        return True
 
-        # Unknown rule → DO NOT MATCH (prevents accidental early capture)
-        return False
+    # ------------- narrative rendering -------------
+    def _rand(self, seq: List[str]) -> str:
+        if not seq: return ""
+        return random.choice(seq)
 
-    @staticmethod
-    def _infer_outcome_from_name(rule: str, default: str = "in_home") -> str:
-        r = rule.lower()
-        if "memory" in r: return "memory_care"
-        if "assisted" in r or "al_" in r: return "assisted_living"
-        if "no_care" in r or "none" in r: return "none"
-        if "in_home" in r: return "in_home"
-        return default
+    def _render_message(self, template: str, ctx: Dict[str, Any]) -> str:
+        safe = {k: ("" if v is None else v) for k, v in ctx.items()}
+        try:
+            return template.format(**safe)
+        except Exception:
+            return template
 
-    # --- narrative rendering ---
-
-    def _render(self, rule: str, outcome: str, flags: Set[str], scores: Dict[str, int], name: str) -> str:
-        meta = self.rules.get(rule, {})
+    def _render(self, rule_name: str, flags: Set[str], scores: Dict[str, int], name: str) -> str:
+        meta = self.rules.get(rule_name, {})
         template = meta.get("message_template", "")
 
-        # Build {key_issues} from issue_phrases
+        # {key_issues}
         phrases: List[str] = []
         issue_catalog: Dict[str, List[str]] = self.rec.get("issue_phrases", {})
         for flg in flags:
-            opts = issue_catalog.get(flg)
-            if opts:
-                phrases.append(random.choice(opts))
+            if flg in issue_catalog and issue_catalog[flg]:
+                phrases.append(random.choice(issue_catalog[flg]))
         key_issues = ", ".join(phrases) if phrases else "your current situation"
 
-        # Build {preference_clause}
+        # {preference_clause}
         if "strongly_prefers_home" in flags:
             pref_key = "strongly_prefers_home"
         elif "prefers_home" in flags:
@@ -294,62 +230,73 @@ class PlannerEngine:
             greeting=greeting,
             positive_state=positive_state,
             encouragement=encouragement,
-            home_preference=("prefer to stay home"
-                             if ("prefers_home" in flags or "strongly_prefers_home" in flags)
-                             else "are open to moving"),
-            recommendation=outcome.replace("_", " ").title(),
+            home_preference=("prefer to stay home" if ("prefers_home" in flags or "strongly_prefers_home" in flags) else "are open to moving"),
+            recommendation=meta.get("outcome", "in-home care").replace("_", " ").title(),
         )
-
-        return self._format_template(template, ctx)
-
-    @staticmethod
-    def _rand(seq: List[str]) -> str:
-        return random.choice(seq) if seq else ""
-
-    @staticmethod
-    def _format_template(template: str, ctx: Dict[str, Any]) -> str:
-        safe = {k: ("" if v is None else v) for k, v in ctx.items()}
-        try:
-            return template.format(**safe)
-        except Exception:
-            # Return raw template if any placeholder mismatch occurs
-            return template
+        return self._render_message(template, ctx)
 
 
-# ----------------------------- Calculator Engine -----------------------------
-
+# --------- Calculator engine (owns cost math) ---------
 class CalculatorEngine:
     """
-    Intentionally simple placeholder. Your real pricing logic can live elsewhere.
+    Centralized cost model consumed by cost_controls.
+    monthly_cost() reads typed inputs and returns a monthly $ int.
     """
     def __init__(self, *args, **kwargs):
         pass
 
     def monthly_cost(self, inputs: Any) -> int:
+        # required basics
         care_type = getattr(inputs, "care_type", "in_home")
-        base = {"in_home": 4000, "assisted_living": 6500, "memory_care": 8500, "none": 0}
-        return int(base.get(care_type, 4000))
+        state_factor = float(getattr(inputs, "state_factor", 1.0))
 
+        base = 0
 
-# ----------------------------- Compatibility helper -----------------------------
+        if care_type == "none":
+            base = 0
 
-def resolve_narrative(obj: Any) -> str:
-    """
-    Back-compat for older app.py that imports `resolve_narrative` from engines.
-    Returns the best available narrative/advisory/message string.
-    Accepts either a PlannerResult or a dict-like object.
-    """
-    # PlannerResult instance
-    if hasattr(obj, "__dict__"):
-        for attr in ("narrative", "advisory", "message", "message_rendered"):
-            val = getattr(obj, attr, None)
-            if isinstance(val, str) and val.strip():
-                return val
-        return ""
-    # dict-like
-    if isinstance(obj, dict):
-        for key in ("narrative", "advisory", "message", "message_rendered"):
-            val = obj.get(key)
-            if isinstance(val, str) and val.strip():
-                return val
-    return ""
+        elif care_type == "in_home":
+            hours = int(getattr(inputs, "in_home_hours_per_day", 4))
+            days  = int(getattr(inputs, "in_home_days_per_month", 20))
+            care_level = str(getattr(inputs, "care_level", "Medium"))
+            mobility   = str(getattr(inputs, "mobility", "Independent"))
+            chronic    = str(getattr(inputs, "chronic", "Some"))
+            # baseline hourly
+            hourly = 30.0
+            if care_level == "High":   hourly += 6
+            if care_level == "Low":    hourly -= 4
+            if mobility == "Assisted": hourly += 2
+            if mobility == "Non-ambulatory": hourly += 6
+            if chronic == "Multiple/Complex": hourly += 4
+            base = hourly * hours * days
+
+        elif care_type == "assisted_living":
+            room_type  = str(getattr(inputs, "room_type", "Studio"))
+            care_level = str(getattr(inputs, "care_level", "Medium"))
+            mobility   = str(getattr(inputs, "mobility", "Independent"))
+            chronic    = str(getattr(inputs, "chronic", "Some"))
+            # base rent by room
+            base = {"Studio": 4200, "1 Bedroom": 5200, "Shared": 3800}.get(room_type, 4200)
+            # care plan adders
+            if care_level == "High": base += 1000
+            elif care_level == "Low": base -= 400
+            if mobility == "Assisted": base += 200
+            elif mobility == "Non-ambulatory": base += 700
+            if chronic == "Multiple/Complex": base += 600
+
+        elif care_type == "memory_care":
+            room_type  = str(getattr(inputs, "room_type", "Studio"))
+            care_level = str(getattr(inputs, "care_level", "High"))
+            mobility   = str(getattr(inputs, "mobility", "Assisted"))
+            chronic    = str(getattr(inputs, "chronic", "Multiple/Complex"))
+            base = {"Studio": 6200, "1 Bedroom": 7200, "Shared": 5500}.get(room_type, 6200)
+            if care_level == "High": base += 1200
+            elif care_level == "Medium": base += 700
+            if mobility == "Non-ambulatory": base += 800
+            elif mobility == "Assisted": base += 300
+            if chronic == "Multiple/Complex": base += 800
+            elif chronic == "Some": base += 300
+
+        # apply location factor
+        base = int(round(base * state_factor))
+        return max(0, base)

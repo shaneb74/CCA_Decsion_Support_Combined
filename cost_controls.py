@@ -1,234 +1,142 @@
-# cost_controls.py — single location control + per-person cost configuration
+# cost_controls.py — scenario controls & state-wide location control (single instance)
 from __future__ import annotations
-
 from types import SimpleNamespace
 import streamlit as st
 
-# Notes:
-# - UI NEVER does math. It only collects inputs and calls calculator.monthly_cost(inputs).
-# - For care_type == "none", we call the engine and store 0; no UI controls are shown.
-# - Location selector is rendered ONCE via render_location_control(); do not duplicate it elsewhere.
+STATE_FACTORS = {
+    "National": 1.0,
+    "Washington": 1.15,
+    "California": 1.25,
+    "Texas": 0.95,
+    "Florida": 1.05,
+}
 
+MOBILITY_PREFILL_MAP = {
+    "Independent": "Independent (no device)",
+    "Assisted": "Assisted (cane/walker or needs help)",
+    "Non-ambulatory": "Non-ambulatory (wheelchair/bedbound)",
+}
 
-def _mobility_prefill_from_flags(flags: set[str]) -> str:
-    """
-    Map flags to a default Mobility UI choice.
-    """
-    if "high_mobility_dependence" in flags:
-        return "Non-ambulatory"
-    if "moderate_mobility" in flags:
-        return "Assisted"
-    return "Independent"
-
+def _ensure_defaults():
+    st.session_state.setdefault("cost_state", "National")
+    st.session_state.setdefault("cost_factor", 1.0)
+    st.session_state.setdefault("person_costs", {})
+    st.session_state.setdefault("care_overrides", {})
+    st.session_state.setdefault("planner_results", {})
+    st.session_state.setdefault("mobility_prefill", {})
 
 def render_location_control():
-    """
-    Single shared Location control. Stores selected state in st.session_state['cost_state'] via the widget key.
-    """
-    states = ["National", "Washington", "California", "Texas", "Florida"]
-    default_state = st.session_state.get("cost_state", "National")
-    try:
-        default_index = states.index(default_state) if default_state in states else 0
-    except Exception:
-        default_index = 0
-
-    # IMPORTANT: let Streamlit own the widget state; don't assign to st.session_state manually.
-    st.selectbox(
-        "Location",
-        states,
-        index=default_index,
-        key="cost_state",
-        help="Adjusts for typical market rates in the selected state.",
-    )
+    """Single global Location control (no per-person duplicates)."""
+    _ensure_defaults()
+    choice = st.selectbox("Location", list(STATE_FACTORS.keys()), index=list(STATE_FACTORS.keys()).index(st.session_state["cost_state"]))
+    st.session_state["cost_state"] = choice
+    st.session_state["cost_factor"] = float(STATE_FACTORS.get(choice, 1.0))
 
 
-def render_costs_for_active_recommendations(
-    *,
-    calculator,
-    people: list[dict],
-    planner_results: dict,
-    care_overrides: dict,
-) -> int:
+def _mobility_default_for(pid: str) -> str:
+    human = st.session_state.get("mobility_prefill", {}).get(pid, "Independent")
+    return MOBILITY_PREFILL_MAP.get(human, MOBILITY_PREFILL_MAP["Independent"])
+
+
+def render_costs_for_active_recommendations(calculator) -> int:
     """
-    Renders cost controls for each person based on the active scenario (override else recommendation),
-    calls calculator.monthly_cost(inputs), and stores results in st.session_state['person_costs'].
+    For each person:
+      - show appropriate cost controls depending on care scenario
+      - compute monthly cost via calculator.monthly_cost(inputs)
+      - persist per-person totals in st.session_state['person_costs']
     Returns combined total.
     """
-    st.session_state.person_costs = st.session_state.get("person_costs", {})
-    combined_total = 0
-    state = st.session_state.get("cost_state", "National")
+    _ensure_defaults()
+    combined = 0
+    factor = float(st.session_state.get("cost_factor", 1.0))
 
-    # Pretty labels
-    nice = {
-        "none": "None",
-        "in_home": "In-home Care",
-        "assisted_living": "Assisted Living",
-        "memory_care": "Memory Care",
-    }
+    # People live on app session_state; import here to avoid cyc dependency
+    people = st.session_state.get("people", [])
+    planner_results = st.session_state.get("planner_results", {})
+    overrides = st.session_state.get("care_overrides", {})
 
     for p in people:
         pid = p["id"]
         name = p["display_name"]
-
-        rec = planner_results.get(pid)
-        # rec can be a dataclass (PlannerResult) or dict (older runs)
-        if hasattr(rec, "care_type"):
-            care_type_rec = rec.care_type
-            flags = set(rec.flags or [])
-        elif isinstance(rec, dict):
-            care_type_rec = rec.get("care_type", "in_home")
-            flags = set(rec.get("flags", []))
+        rec_obj = planner_results.get(pid)
+        if hasattr(rec_obj, "__dict__"):
+            scen = (rec_obj.care_type or "none").strip()
+        elif isinstance(rec_obj, dict):
+            scen = (rec_obj.get("care_type") or "none").strip()
         else:
-            care_type_rec = "in_home"
-            flags = set()
+            scen = "none"
+        scen = overrides.get(pid, scen)
 
-        scen = (care_overrides.get(pid, care_type_rec) or "in_home").strip()
+        st.subheader(f"{name} — Scenario: {scen.replace('_', ' ').title()}")
 
-        st.subheader(f"{name} — Scenario: {nice.get(scen, scen).title()}")
+        care_level = st.selectbox(
+            "Care Level (staffing intensity)",
+            ["Low", "Medium", "High"],
+            index=["Low", "Medium", "High"].index("High" if scen == "memory_care" else "Medium"),
+            key=f"{pid}_care_level",
+        )
 
-        # ----- Scenario: NONE (engine is the single source of truth) -----
-        if scen in ("none", "", None):
-            inp = SimpleNamespace(state=state, care_type="none")
-            try:
-                monthly = calculator.monthly_cost(inp)  # engine should return 0 for 'none'
-            except Exception:
-                monthly = 0
-            st.metric("Estimated Monthly Cost", f"${int(monthly):,}")
-            st.session_state.person_costs[pid] = int(monthly)
-            st.divider()
-            combined_total += int(monthly)
-            continue
+        # Mobility (carry over)
+        mobility_options = [
+            "Independent (no device)",
+            "Assisted (cane/walker or needs help)",
+            "Non-ambulatory (wheelchair/bedbound)",
+        ]
+        mob_label = st.selectbox(
+            "Mobility",
+            mobility_options,
+            index=mobility_options.index(_mobility_default_for(pid)),
+            key=f"{pid}_mobility",
+        )
+        mobility_map_out = {
+            "Independent (no device)": "Independent",
+            "Assisted (cane/walker or needs help)": "Assisted",
+            "Non-ambulatory (wheelchair/bedbound)": "Non-ambulatory",
+        }
+        mobility = mobility_map_out[mob_label]
 
-        # ----- Common context for AL/MC drop-downs -----
-        care_levels = ["Low", "Medium", "High"]
-        rooms = ["Studio", "1 Bedroom", "Shared"]
-        mobility_choices = ["Independent", "Assisted", "Non-ambulatory"]
-        chronic_choices = ["None", "Some", "Multiple/Complex"]
+        chronic_options = [
+            "None (no ongoing conditions)",
+            "Some (1–2 manageable conditions)",
+            "Multiple/Complex (several or complex needs)",
+        ]
+        chronic_map_out = {
+            chronic_options[0]: "None",
+            chronic_options[1]: "Some",
+            chronic_options[2]: "Multiple/Complex",
+        }
+        chronic_label = st.selectbox(
+            "Chronic Conditions",
+            chronic_options,
+            index=(2 if scen == "memory_care" else 1),
+            key=f"{pid}_chronic",
+        )
+        chronic = chronic_map_out[chronic_label]
 
-        # derive prefill from flags (carry-over)
-        mobility_prefill = _mobility_prefill_from_flags(flags)
+        inp = SimpleNamespace(
+            care_type=scen,
+            care_level=care_level,
+            mobility=mobility,
+            chronic=chronic,
+            state_factor=factor,
+        )
 
-        # ----- Scenario: IN-HOME (sliders) -----
-        if scen == "in_home":
-            # hours/day and days/month sliders; defaults 4 and 20
+        if scen in ("assisted_living", "memory_care"):
+            room = st.selectbox("Room Type", ["Studio", "1 Bedroom", "Shared"], key=f"{pid}_room")
+            inp.room_type = room
+        elif scen == "in_home":
             hours = st.slider("In-home care hours per day", 0, 24, 4, 1, key=f"{pid}_hours")
             days = st.slider("Days of care per month", 0, 31, 20, 1, key=f"{pid}_days")
-
-            # Let user still indicate mobility/chronic for pricing models that use them
-            mob_label = st.selectbox(
-                "Mobility",
-                mobility_choices,
-                index=mobility_choices.index(mobility_prefill),
-                key=f"{pid}_mobility_inhome",
-            )
-            chr_label = st.selectbox(
-                "Chronic Conditions",
-                chronic_choices,
-                index=1,  # default "Some"
-                key=f"{pid}_chronic_inhome",
-            )
-
-            inp = SimpleNamespace(
-                state=state,
-                care_type="in_home",
-                in_home_hours_per_day=int(hours),
-                in_home_days_per_month=int(days),
-                mobility=mob_label,
-                chronic=chr_label,
-            )
-
-        # ----- Scenario: ASSISTED LIVING (dropdowns) -----
-        elif scen == "assisted_living":
-            care_level = st.selectbox(
-                "Care Level (staffing intensity)",
-                care_levels,
-                index=1 if "severe_cognitive_risk" in flags else 1,
-                key=f"{pid}_care_level_al",
-            )
-            room = st.selectbox(
-                "Room Type",
-                rooms,
-                index=0,
-                key=f"{pid}_room_al",
-            )
-            mob_label = st.selectbox(
-                "Mobility",
-                mobility_choices,
-                index=mobility_choices.index(mobility_prefill),
-                key=f"{pid}_mobility_al",
-            )
-            chr_label = st.selectbox(
-                "Chronic Conditions",
-                chronic_choices,
-                index=2 if "severe_cognitive_risk" in flags else 1,
-                key=f"{pid}_chronic_al",
-            )
-
-            inp = SimpleNamespace(
-                state=state,
-                care_type="assisted_living",
-                care_level=care_level,
-                room_type=room,
-                mobility=mob_label,
-                chronic=chr_label,
-            )
-
-        # ----- Scenario: MEMORY CARE (dropdowns) -----
-        elif scen == "memory_care":
-            care_level = st.selectbox(
-                "Care Level (staffing intensity)",
-                care_levels,
-                index=2,  # default to High
-                key=f"{pid}_care_level_mc",
-            )
-            room = st.selectbox(
-                "Room Type",
-                rooms,
-                index=0,
-                key=f"{pid}_room_mc",
-            )
-            mob_label = st.selectbox(
-                "Mobility",
-                mobility_choices,
-                index=mobility_choices.index(mobility_prefill),
-                key=f"{pid}_mobility_mc",
-            )
-            chr_label = st.selectbox(
-                "Chronic Conditions",
-                chronic_choices,
-                index=2,  # Multiple/Complex by default for MC
-                key=f"{pid}_chronic_mc",
-            )
-
-            inp = SimpleNamespace(
-                state=state,
-                care_type="memory_care",
-                care_level=care_level,
-                room_type=room,
-                mobility=mob_label,
-                chronic=chr_label,
-            )
-
+            inp.in_home_hours_per_day = int(hours)
+            inp.in_home_days_per_month = int(days)
         else:
-            # Unknown label — treat as in_home gracefully
-            hours = st.slider("In-home care hours per day", 0, 24, 4, 1, key=f"{pid}_hours_fallback")
-            days = st.slider("Days of care per month", 0, 31, 20, 1, key=f"{pid}_days_fallback")
-            inp = SimpleNamespace(
-                state=state,
-                care_type="in_home",
-                in_home_hours_per_day=int(hours),
-                in_home_days_per_month=int(days),
-            )
+            # none
+            pass
 
-        # Compute monthly cost strictly via engine
-        try:
-            monthly = calculator.monthly_cost(inp)
-        except Exception:
-            monthly = 0
-
-        st.metric("Estimated Monthly Cost", f"${int(monthly):,}")
-        st.session_state.person_costs[pid] = int(monthly)
+        monthly = int(calculator.monthly_cost(inp))
+        st.session_state["person_costs"][pid] = monthly
+        st.metric("Estimated Monthly Cost", f"${monthly:,}")
         st.divider()
-        combined_total += int(monthly)
+        combined += monthly
 
-    return int(combined_total)
+    return int(combined)
