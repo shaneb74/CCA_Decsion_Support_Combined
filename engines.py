@@ -5,7 +5,6 @@ import json
 import random
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
@@ -100,7 +99,6 @@ class PlannerEngine:
         th = self.rec.get("final_decision_thresholds", {})
         self.in_home_min = _num_from_threshold(th.get("in_home_min"), 3)
         self.al_min      = _num_from_threshold(th.get("assisted_living_min"), 6)
-        # dependence threshold: if absent in thresholds, try to infer from rule text; else default 2
         self.dep_min     = _num_from_threshold(th.get("dependence_flags_min"), 2)
 
         # Dependence flags list can live under the rule body
@@ -203,8 +201,10 @@ class PlannerEngine:
         f = flags
         s = scores
 
-        # Fast memory-care override exactly as specified: severe cognitive + no support
-        if "severe_cognitive_risk" in f and "no_support" in f:
+        # Strict memory-care override: require severe cognitive + (no support OR high safety OR high dependence)
+        if ("severe_cognitive_risk" in f) and (
+            "no_support" in f or "high_safety_concern" in f or "high_dependence" in f
+        ):
             return "memory_care_override", "memory_care"
 
         # Walk precedence
@@ -234,8 +234,8 @@ class PlannerEngine:
     def _match(self, rule_name: str, meta: Dict[str, Any],
                flags: Set[str], scores: Dict[str, int]) -> bool:
         """
-        Custom handlers for known rule names. Unknown rules return True
-        (so they can still render their message and outcome if provided).
+        Custom handlers for known rule names. Unknown rules return False
+        (so they don't accidentally match just because they exist).
         """
         f = flags
         s = scores
@@ -247,13 +247,19 @@ class PlannerEngine:
         def all_of(*need: str) -> bool: return all(n in f for n in need)
         def none_of(*ban: str) -> bool: return all(n not in f for n in ban)
 
+        # ---- explicit handlers (names from your JSON) ----
+        if rule_name == "memory_care_override":
+            # already handled early; keep here for completeness
+            return ("severe_cognitive_risk" in f) and (
+                "no_support" in f or "high_safety_concern" in f or "high_dependence" in f
+            )
+
+        if rule_name in ("assisted_living_score", "assisted_living"):
+            return s.get("assisted_living_score", 0) >= al_min
+
         if rule_name == "dependence_flag_logic":
-            # Count the exact flags specified by JSON (or the default set)
             count = sum(1 for fl in self.dep_count_flags if fl in f)
             return count >= dep_min
-
-        if rule_name == "assisted_living_score":
-            return s.get("assisted_living_score", 0) >= al_min
 
         if rule_name == "balanced_al":
             return (s.get("assisted_living_score", 0) >= al_min and
@@ -294,8 +300,8 @@ class PlannerEngine:
                             "severe_cognitive_risk", "high_safety_concern",
                             "moderate_cognitive_decline", "moderate_safety_concern", "high_risk"))
 
-        # Unknown rule names: let them match so their outcome/message apply
-        return True
+        # Unknown rule names MUST NOT match implicitly
+        return False
 
     # ---------------- Narrative rendering ----------------
 
@@ -317,8 +323,9 @@ class PlannerEngine:
 
         # Build {key_issues}
         phrases: List[str] = []
+        issue_catalog: Dict[str, List[str]] = self.issue_phrases
         for flg in flags:
-            plist = self.issue_phrases.get(flg)
+            plist = issue_catalog.get(flg)
             if plist:
                 phrases.append(self._rand(plist))
         key_issues = ", ".join(phrases) if phrases else "your current situation"
