@@ -1,4 +1,4 @@
-# engines.py — Planner (JSON-driven) + Calculator (engines own all math)
+# engines.py — Planner (JSON-driven) + Calculator (cost math)
 from __future__ import annotations
 
 import json
@@ -6,7 +6,6 @@ import random
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
-from pathlib import Path
 
 
 @dataclass
@@ -22,8 +21,8 @@ class PlannerResult:
 class PlannerEngine:
     """
     Self-contained, JSON-driven recommendation logic.
-    - Reads Q&A triggers from QA JSON (root)
-    - Reads scoring & rules from recommendation JSON (root)
+    - Reads Q&A triggers from QA JSON
+    - Reads scoring & rules from recommendation JSON
     - Returns PlannerResult with narrative rendered from templates
     """
     def __init__(self, qa_path: str, rec_path: str):
@@ -35,7 +34,7 @@ class PlannerEngine:
         self.rules: Dict[str, Dict[str, Any]] = self.rec.get("final_recommendation", {})
         self.precedence: List[str] = self.rec.get("decision_precedence", list(self.rules.keys()))
 
-        # thresholds (accept ints or strings like ">= 6")
+        # thresholds
         self.in_home_min = 3
         self.al_min = 6
         self.dep_min = 2
@@ -45,7 +44,8 @@ class PlannerEngine:
         self.dep_min = self._num(th.get("dependence_flags_min"), self.dep_min)
 
     def _num(self, v, default):
-        if isinstance(v, (int, float)): return int(v)
+        if isinstance(v, (int, float)):
+            return int(v)
         if isinstance(v, str):
             m = re.search(r"(\d+)", v)
             if m:
@@ -57,6 +57,7 @@ class PlannerEngine:
         flags, scores, debug = self._evaluate(answers)
         rule_name, outcome = self._decide(flags, scores)
         narrative = self._render(rule_name, flags, scores, name)
+        debug.append(f"matched rule: {rule_name}")
         return PlannerResult(
             care_type=outcome,
             flags=sorted(flags),
@@ -72,7 +73,6 @@ class PlannerEngine:
         flags: Set[str] = set()
         debug: List[str] = []
 
-        # IMPORTANT: questions are 1-based (q1..qN)
         for idx, q in enumerate(self.qa.get("questions", []), start=1):
             qk = f"q{idx}"
             a = answers.get(qk)
@@ -107,13 +107,6 @@ class PlannerEngine:
         """Walk precedence and pick the first matching rule; infer outcome when omitted."""
         ctx = {"in_min": self.in_home_min, "al_min": self.al_min, "dep_min": self.dep_min}
 
-        def any_of(*need: str) -> bool: return any(n in flags for n in need)
-        def none_of(*ban: str) -> bool: return all(n not in flags for n in ban)
-
-        # Strong, explicit early override for memory care, if JSON expects it
-        if "severe_cognitive_risk" in flags and any_of("no_support", "high_safety_concern"):
-            return "memory_care_override", "memory_care"
-
         for rule in self.precedence:
             meta = self.rules.get(rule)
             if not meta:
@@ -135,7 +128,7 @@ class PlannerEngine:
 
     def _match(self, rule_name: str, meta: Dict[str, Any], ctx: Dict[str, Any],
                flags: Set[str], scores: Dict[str, int]) -> bool:
-        """Custom handlers for rule names we know; otherwise allow the rule."""
+        """Custom handlers for known rules. Unknown rules should NOT match by default."""
         f = flags
         s = scores
         in_min = ctx["in_min"]; al_min = ctx["al_min"]; dep_min = ctx["dep_min"]
@@ -143,6 +136,12 @@ class PlannerEngine:
         def any_of(*need: str) -> bool: return any(n in f for n in need)
         def all_of(*need: str) -> bool: return all(n in f for n in need)
         def none_of(*ban: str) -> bool: return all(n not in f for n in ban)
+
+        if rule_name == "memory_care_override":
+            return (
+                "severe_cognitive_risk" in f and
+                ("no_support" in f or "high_safety_concern" in f or "high_dependence" in f)
+            )
 
         if rule_name == "dependence_flag_logic":
             to_count = self.rec.get("dependence_flag_logic", {}).get(
@@ -181,8 +180,8 @@ class PlannerEngine:
                             "severe_cognitive_risk", "high_safety_concern",
                             "moderate_cognitive_decline", "moderate_safety_concern", "high_risk"))
 
-        # Unknown rules: allow, so they can still render their message/outcome
-        return True
+        # Unknown rules should not auto-match
+        return False
 
     # ------------- narrative rendering -------------
     def _rand(self, seq: List[str]) -> str:
@@ -200,7 +199,6 @@ class PlannerEngine:
         meta = self.rules.get(rule_name, {})
         template = meta.get("message_template", "")
 
-        # {key_issues}
         phrases: List[str] = []
         issue_catalog: Dict[str, List[str]] = self.rec.get("issue_phrases", {})
         for flg in flags:
@@ -208,7 +206,6 @@ class PlannerEngine:
                 phrases.append(random.choice(issue_catalog[flg]))
         key_issues = ", ".join(phrases) if phrases else "your current situation"
 
-        # {preference_clause}
         if "strongly_prefers_home" in flags:
             pref_key = "strongly_prefers_home"
         elif "prefers_home" in flags:
@@ -236,67 +233,45 @@ class PlannerEngine:
         return self._render_message(template, ctx)
 
 
-# --------- Calculator engine (owns cost math) ---------
+# --------- Calculator engine ---------
 class CalculatorEngine:
-    """
-    Centralized cost model consumed by cost_controls.
-    monthly_cost() reads typed inputs and returns a monthly $ int.
-    """
+    """Centralized cost model consumed by cost_controls."""
     def __init__(self, *args, **kwargs):
         pass
 
     def monthly_cost(self, inputs: Any) -> int:
-        # required basics
         care_type = getattr(inputs, "care_type", "in_home")
-        state_factor = float(getattr(inputs, "state_factor", 1.0))
+        factor = float(getattr(inputs, "region_factor", 1.0))
 
         base = 0
-
         if care_type == "none":
             base = 0
 
         elif care_type == "in_home":
-            hours = int(getattr(inputs, "in_home_hours_per_day", 4))
-            days  = int(getattr(inputs, "in_home_days_per_month", 20))
-            care_level = str(getattr(inputs, "care_level", "Medium"))
-            mobility   = str(getattr(inputs, "mobility", "Independent"))
-            chronic    = str(getattr(inputs, "chronic", "Some"))
-            # baseline hourly
+            hours = int(getattr(inputs, "ih_hours_per_day", 4))
+            days  = int(getattr(inputs, "ih_days_per_month", 20))
             hourly = 30.0
-            if care_level == "High":   hourly += 6
-            if care_level == "Low":    hourly -= 4
-            if mobility == "Assisted": hourly += 2
-            if mobility == "Non-ambulatory": hourly += 6
-            if chronic == "Multiple/Complex": hourly += 4
             base = hourly * hours * days
 
         elif care_type == "assisted_living":
-            room_type  = str(getattr(inputs, "room_type", "Studio"))
-            care_level = str(getattr(inputs, "care_level", "Medium"))
-            mobility   = str(getattr(inputs, "mobility", "Independent"))
-            chronic    = str(getattr(inputs, "chronic", "Some"))
-            # base rent by room
-            base = {"Studio": 4200, "1 Bedroom": 5200, "Shared": 3800}.get(room_type, 4200)
-            # care plan adders
-            if care_level == "High": base += 1000
-            elif care_level == "Low": base -= 400
-            if mobility == "Assisted": base += 200
-            elif mobility == "Non-ambulatory": base += 700
-            if chronic == "Multiple/Complex": base += 600
+            room  = str(getattr(inputs, "al_room_type", "Studio"))
+            lvl   = str(getattr(inputs, "al_care_level", "Medium"))
+            mob   = str(getattr(inputs, "al_mobility", "Independent"))
+            cond  = str(getattr(inputs, "al_conditions", "Some"))
+            base = {"Studio": 4200, "1 Bedroom": 5200, "2 Bedroom": 6200}.get(room, 4200)
+            if lvl == "High": base += 1000
+            elif lvl == "Low": base -= 400
+            if mob == "Walker": base += 200
+            elif mob == "Wheelchair": base += 700
+            if cond == "Significant": base += 600
 
         elif care_type == "memory_care":
-            room_type  = str(getattr(inputs, "room_type", "Studio"))
-            care_level = str(getattr(inputs, "care_level", "High"))
-            mobility   = str(getattr(inputs, "mobility", "Assisted"))
-            chronic    = str(getattr(inputs, "chronic", "Multiple/Complex"))
-            base = {"Studio": 6200, "1 Bedroom": 7200, "Shared": 5500}.get(room_type, 6200)
-            if care_level == "High": base += 1200
-            elif care_level == "Medium": base += 700
-            if mobility == "Non-ambulatory": base += 800
-            elif mobility == "Assisted": base += 300
-            if chronic == "Multiple/Complex": base += 800
-            elif chronic == "Some": base += 300
+            lvl  = str(getattr(inputs, "mc_care_level", "Standard"))
+            mob  = str(getattr(inputs, "mc_mobility", "Walker"))
+            cond = str(getattr(inputs, "mc_conditions", "Moderate"))
+            base = 6200
+            if lvl == "Enhanced": base += 800
+            if mob == "Wheelchair": base += 500
+            if cond == "Advanced": base += 900
 
-        # apply location factor
-        base = int(round(base * state_factor))
-        return max(0, base)
+        return max(0, int(round(base * factor)))
