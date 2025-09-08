@@ -1,35 +1,32 @@
-# engines.py — Planner & Calculator engines + narrative resolver (production-ready)
-
+# engines.py — Planner + Recommendation engine (fixed precedence matching)
 from __future__ import annotations
 
 import json
-import random
 import re
+import random
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-# ============================== Public datatypes ==============================
-
+# ---------- Data model ----------
 @dataclass
 class PlannerResult:
-    """Normalized result from the planner engine for a single person."""
     care_type: str                    # "in_home" | "assisted_living" | "memory_care" | "none"
-    flags: List[str]                  # triggered flags (sorted)
-    scores: Dict[str, int]            # {"in_home_score": int, "assisted_living_score": int}
-    reasons: List[str]                # debug/explanation lines
-    narrative: str                    # rendered message to show in UI
-    raw_rule: Optional[str] = None    # which rule fired (debug)
+    flags: List[str]
+    scores: Dict[str, int]
+    reasons: List[str]
+    narrative: str
+    raw_rule: Optional[str] = None
 
 
-# ============================== Planner Engine ================================
-
+# ---------- Planner / Recommender ----------
 class PlannerEngine:
     """
-    Reads Q&A JSON and Recommendation JSON (in repo root) and converts a dict of
-    answers { "q1": int, "q2": int, ... } into a PlannerResult.
+    Reads Q&A JSON and Recommendation JSON (expected by app.py to be in repo root),
+    evaluates answers => flags & scores, then picks a final recommendation using
+    decision_precedence + rule handlers, and renders a narrative.
     """
+
     def __init__(self, qa_path: str, rec_path: str):
         # Load JSONs
         with open(qa_path, "r", encoding="utf-8") as f:
@@ -37,38 +34,34 @@ class PlannerEngine:
         with open(rec_path, "r", encoding="utf-8") as f:
             self.rec = json.load(f)
 
-        # Rule catalog and precedence
+        # Rule table & precedence (keep file order if precedence not provided)
         self.rules: Dict[str, Dict[str, Any]] = self.rec.get("final_recommendation", {})
         self.precedence: List[str] = self.rec.get("decision_precedence", list(self.rules.keys()))
 
-        # Thresholds (allow ints OR strings like ">= 6")
+        # Thresholds (accept ints or strings like ">= 6")
         self.in_home_min = 3
         self.al_min = 6
         self.dep_min = 2
 
         th = self.rec.get("final_decision_thresholds", {})
-        self.in_home_min = self._num(th.get("in_home_min"), self.in_home_min)
-        self.al_min      = self._num(th.get("assisted_living_min"), self.al_min)
-        self.dep_min     = self._num(th.get("dependence_flags_min"), self.dep_min)
 
-    # ---------- helpers ----------
+        def _num(v, default):
+            if isinstance(v, (int, float)):
+                return int(v)
+            if isinstance(v, str):
+                m = re.search(r"(\d+)", v)
+                if m:
+                    return int(m.group(1))
+            return default
 
-    @staticmethod
-    def _num(v: Any, default: int) -> int:
-        """Accept numeric or strings like '>= 6'/'6'; default when not parseable."""
-        if isinstance(v, (int, float)):
-            return int(v)
-        if isinstance(v, str):
-            m = re.search(r"(\d+)", v)
-            if m:
-                return int(m.group(1))
-        return default
+        self.in_home_min = _num(th.get("in_home_min"), self.in_home_min)
+        self.al_min = _num(th.get("assisted_living_min"), self.al_min)
+        self.dep_min = _num(th.get("dependence_flags_min"), self.dep_min)
 
-    # ---------- public API ----------
-
+    # -------- public API --------
     def run(self, answers: Dict[str, int], *, name: str = "You") -> PlannerResult:
         """
-        Answers are 1-based keys: {"q1": 2, "q2": 1, ...} (as saved by the app).
+        Answers are 1-based keys: {"q1": 2, "q2": 1, ...}
         """
         flags, scores, debug = self._evaluate(answers)
         rule_name, outcome = self._decide(flags, scores)
@@ -83,16 +76,13 @@ class PlannerEngine:
             raw_rule=rule_name,
         )
 
-    # ---------- internals ----------
-
+    # -------- internals --------
     def _evaluate(self, answers: Dict[str, int]) -> Tuple[Set[str], Dict[str, int], List[str]]:
-        """
-        Turn raw answers into flags + scores using Q&A triggers + flag_to_category_mapping.
-        """
+        """Turn raw answers into flags + scores using JSON triggers + flag_to_category_mapping."""
         flags: Set[str] = set()
         debug: List[str] = []
 
-        # IMPORTANT: questions in the UI are saved as q1..qN (1-based)
+        # IMPORTANT: UI saves answers as q1..qN (1-based)
         for idx, q in enumerate(self.qa.get("questions", []), start=1):
             qk = f"q{idx}"
             a = answers.get(qk)
@@ -100,20 +90,15 @@ class PlannerEngine:
                 continue
 
             triggers = q.get("trigger", {})
-            # Each trigger group may contain items like {"answer": 3, "flag": "high_dependence"}
             for _cat, tlist in triggers.items():
                 for t in tlist:
-                    try:
-                        if "answer" in t and int(t["answer"]) == int(a):
-                            fl = t.get("flag")
-                            if fl:
-                                flags.add(fl)
-                                debug.append(f"{qk}={a} → flag {fl}")
-                    except Exception:
-                        # avoid crashing if JSON has unexpected types
-                        continue
+                    if "answer" in t and int(t["answer"]) == int(a):
+                        fl = t.get("flag")
+                        if fl:
+                            flags.add(fl)
+                            debug.append(f"{qk}={a} → flag {fl}")
 
-        # Map flags to categories for scoring
+        # Map flags → scoring categories
         cat_map: Dict[str, str] = self.rec.get("flag_to_category_mapping", {})
         triggered_categories: Set[str] = set()
         for fl in flags:
@@ -123,9 +108,8 @@ class PlannerEngine:
         if triggered_categories:
             debug.append(f"categories: {sorted(triggered_categories)}")
 
-        # Scores
-        in_home_score = sum(self.rec.get("scoring", {}).get("in_home", {}).get(c, 0) for c in triggered_categories)
-        al_score      = sum(self.rec.get("scoring", {}).get("assisted_living", {}).get(c, 0) for c in triggered_categories)
+        in_home_score = sum(self.rec["scoring"]["in_home"].get(c, 0) for c in triggered_categories)
+        al_score = sum(self.rec["scoring"]["assisted_living"].get(c, 0) for c in triggered_categories)
 
         scores = {
             "in_home_score": in_home_score,
@@ -137,11 +121,8 @@ class PlannerEngine:
     def _decide(self, flags: Set[str], scores: Dict[str, int]) -> Tuple[str, str]:
         """
         Walk precedence and pick the first matching rule; infer outcome when omitted.
+        Ensures rules can't match by default.
         """
-        # Quick explicit safety override: severe cognitive + (no support or high safety) => memory care
-        if "severe_cognitive_risk" in flags and ("no_support" in flags or "high_safety_concern" in flags):
-            return "memory_care_override", "memory_care"
-
         ctx = {
             "flags": flags,
             "scores": scores,
@@ -150,6 +131,14 @@ class PlannerEngine:
             "dep_min": self.dep_min,
         }
 
+        def any_of(*need: str) -> bool:
+            return any(n in flags for n in need)
+
+        # Fast memory-care override (explicit safetynet)
+        if "severe_cognitive_risk" in flags and any_of("no_support", "high_safety_concern"):
+            return "memory_care_override", "memory_care"
+
+        # Precedence loop
         for rule in self.precedence:
             meta = self.rules.get(rule)
             if not meta:
@@ -157,7 +146,6 @@ class PlannerEngine:
             if self._match(rule, meta, ctx, flags, scores):
                 outcome = meta.get("outcome")
                 if not outcome:
-                    # Infer from rule name if JSON omits outcome
                     r = rule.lower()
                     if "memory" in r:
                         outcome = "memory_care"
@@ -169,7 +157,7 @@ class PlannerEngine:
                         outcome = "in_home"
                 return rule, outcome
 
-        # Fallbacks
+        # Fallbacks (if nothing matched)
         if "in_home_with_support_fallback" in self.rules:
             return "in_home_with_support_fallback", "in_home"
         return "no_care_needed", "none"
@@ -183,8 +171,8 @@ class PlannerEngine:
         scores: Dict[str, int],
     ) -> bool:
         """
-        Custom handlers for rule names we know; otherwise allow the rule (so messages
-        with explicit 'outcome' in JSON still render even if we don't have a special handler).
+        Custom handlers for rule names we know; for unknown rules return False so they
+        don't accidentally match just because they appear early in precedence.
         """
         f = flags
         s = scores
@@ -201,13 +189,26 @@ class PlannerEngine:
         def none_of(*ban: str) -> bool:
             return all(n not in f for n in ban)
 
-        # ---- Named rule handlers (align to your JSON keys) ----
+        # --- Explicit handlers that must never auto-match ---
+
+        if rule_name == "memory_care_override":
+            # Only true with severe cognitive risk + (no support OR high safety concern)
+            return ("severe_cognitive_risk" in f) and ("no_support" in f or "high_safety_concern" in f)
 
         if rule_name == "dependence_flag_logic":
-            to_count = self.rec.get("dependence_flag_logic", {}).get(
-                "trigger_if_flags",
-                ["high_dependence", "high_mobility_dependence", "no_support",
-                 "severe_cognitive_risk", "high_safety_concern"],
+            to_count = (
+                self.rec.get("final_recommendation", {})
+                .get("dependence_flag_logic", {})
+                .get(
+                    "trigger_if_flags",
+                    [
+                        "high_dependence",
+                        "high_mobility_dependence",
+                        "no_support",
+                        "severe_cognitive_risk",
+                        "high_safety_concern",
+                    ],
+                )
             )
             count = sum(1 for fl in to_count if fl in f)
             return count >= dep_min
@@ -288,24 +289,20 @@ class PlannerEngine:
                 )
             )
 
-        # Unknown rule names: allow (so JSON with explicit outcomes still applies)
-        return True
+        # Unknown rule names: do NOT match by default
+        return False
 
-    # ---------- narrative rendering ----------
-
-    @staticmethod
-    def _rand(seq: List[str]) -> str:
+    # ------------- narrative rendering -------------
+    def _rand(self, seq: List[str]) -> str:
         if not seq:
             return ""
         return random.choice(seq)
 
-    @staticmethod
-    def _render_message(template: str, ctx: Dict[str, Any]) -> str:
+    def _render_message(self, template: str, ctx: Dict[str, Any]) -> str:
         safe = {k: ("" if v is None else v) for k, v in ctx.items()}
         try:
             return template.format(**safe)
         except Exception:
-            # Be resilient to stale placeholders
             return template
 
     def _render(self, rule_name: str, flags: Set[str], scores: Dict[str, int], name: str) -> str:
@@ -331,9 +328,9 @@ class PlannerEngine:
             pref_key = "default"
         preference_clause = self._rand(self.rec.get("preference_clause_templates", {}).get(pref_key, [""]))
 
-        greeting       = self._rand(self.rec.get("greeting_templates", ["Hello"]))
+        greeting = self._rand(self.rec.get("greeting_templates", ["Hello"]))
         positive_state = self._rand(self.rec.get("positive_state_templates", ["doing well"]))
-        encouragement  = self._rand(self.rec.get("encouragement_templates", ["We’re here for you."]))
+        encouragement = self._rand(self.rec.get("encouragement_templates", ["We’re here for you."]))
 
         ctx = dict(
             name=name,
@@ -342,53 +339,17 @@ class PlannerEngine:
             greeting=greeting,
             positive_state=positive_state,
             encouragement=encouragement,
-            home_preference=("prefer to stay home"
-                             if ("prefers_home" in flags or "strongly_prefers_home" in flags)
-                             else "are open to moving"),
+            home_preference=(
+                "prefer to stay home"
+                if ("prefers_home" in flags or "strongly_prefers_home" in flags)
+                else "are open to moving"
+            ),
             recommendation=meta.get("outcome", "in-home care").replace("_", " ").title(),
         )
-        # If template missing, still return something decent
-        if not template:
-            template = "{greeting} {name}, based on {key_issues}, {recommendation} fits best. {preference_clause}"
         return self._render_message(template, ctx)
 
 
-# ============================== Narrative resolver ============================
-
-def resolve_narrative(result: Any) -> str:
-    """
-    Robustly extract the narrative / advisory message from either:
-    - a PlannerResult object, or
-    - a dict-like payload produced by older engines.
-
-    Priority:
-    1) 'narrative'   (rendered string)
-    2) 'advisory'
-    3) 'message'
-    4) 'message_rendered'
-    5) 'message_template'  (as a last resort—likely contains placeholders)
-    """
-    # Object with attributes?
-    for attr in ("narrative", "advisory", "message", "message_rendered", "message_template"):
-        try:
-            v = getattr(result, attr)
-            if isinstance(v, str) and v.strip():
-                return v
-        except Exception:
-            pass
-
-    # Dict-like?
-    if isinstance(result, dict):
-        for key in ("narrative", "advisory", "message", "message_rendered", "message_template"):
-            v = result.get(key)
-            if isinstance(v, str) and v.strip():
-                return v
-
-    return ""
-
-
-# ============================== Calculator engine =============================
-
+# ---------- Cost shim (unchanged placeholder) ----------
 class CalculatorEngine:
     """Very light placeholder — your pricing model can live elsewhere."""
     def __init__(self, *args, **kwargs):
@@ -398,15 +359,3 @@ class CalculatorEngine:
         care_type = getattr(inputs, "care_type", "in_home")
         base = {"in_home": 4000, "assisted_living": 6500, "memory_care": 8500, "none": 0}
         return int(base.get(care_type, 4000))
-
-
-# ============================== Convenience factory ===========================
-
-def load_default_engines(root: Optional[Path] = None) -> Tuple[PlannerEngine, CalculatorEngine]:
-    """
-    Optional utility some callers use; not required by app.py.
-    """
-    root = root or Path(__file__).resolve().parent
-    qa  = str(root / "question_answer_logic_FINAL_UPDATED.json")
-    rec = str(root / "recommendation_logic_FINAL_MASTER_UPDATED.json")
-    return PlannerEngine(qa, rec), CalculatorEngine()
