@@ -1,28 +1,31 @@
-# engines.py — Planner & Cost engines (self-contained, JSON-driven, evidence-ranked)
+# engines.py — Planner & Cost engines (JSON-driven, evidence-ranked, safe override)
 from __future__ import annotations
 
 import json, re, random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
-from pathlib import Path
 
 # ---------------- Planner result ----------------
 @dataclass
 class PlannerResult:
-    """Stable, pickle-safe result object."""
     care_type: str                    # "in_home" | "assisted_living" | "memory_care" | "none"
     flags: List[str]
     scores: Dict[str, int]
-    reasons: List[str]
+    reasons: List[str]                # human/debug trail
     narrative: str
     raw_rule: Optional[str] = None
 
 # ---------------- Planner engine ----------------
 class PlannerEngine:
     """
-    Reads Q&A JSON and Recommendation JSON and converts answers {"q1": 1, ...}
-    into a PlannerResult **strictly using the JSON rules**, then ranks outcomes
-    by evidence (priority order) rather than first-match wins.
+    Uses question/answer JSON + recommendation JSON to convert
+    answers {"q1": 1, ...} into a PlannerResult.
+
+    Key behaviors:
+      • Flags come ONLY from QA triggers (no hard-coded guesses).
+      • Scores come from flag→category mapping + JSON scoring tables.
+      • Decision is evidence-ranked (not first-match), with a *tight* memory-care override.
+      • Decision trail is appended to `reasons` for transparency.
     """
     def __init__(self, qa_path: str, rec_path: str):
         with open(qa_path, "r", encoding="utf-8") as f:
@@ -39,13 +42,14 @@ class PlannerEngine:
         self.dep_min     = self._num(self.rec.get("final_decision_thresholds", {}).get("dependence_flags_min"), 2)
 
         # scoring weights
-        self.sc_in = self.rec.get("scoring", {}).get("in_home", {})
-        self.sc_al = self.rec.get("scoring", {}).get("assisted_living", {})
+        sc = self.rec.get("scoring", {})
+        self.sc_in = sc.get("in_home", {})
+        self.sc_al = sc.get("assisted_living", {})
 
         # flag → category map (for scoring)
         self.flag2cat: Dict[str, str] = self.rec.get("flag_to_category_mapping", {})
 
-        # rank contributions (higher is more decisive)
+        # rank contributions (higher = more decisive)
         self.rank_weights = {
             "memory_care_override": 100,
             "dependence_flag_logic": 80,
@@ -68,10 +72,15 @@ class PlannerEngine:
             if m: return int(m.group(1))
         return default
 
+    # -------- public API --------
     def run(self, answers: Dict[str, int], *, name: str = "You") -> PlannerResult:
         flags, scores, debug = self._evaluate(answers)
-        rule_name, outcome = self._decide_best(flags, scores)
+        rule_name, outcome, rank_log = self._decide_best(flags, scores)
         narrative = self._render(rule_name, flags, scores, name)
+
+        # add rank_log to reasons for auditability
+        debug.extend(rank_log)
+
         return PlannerResult(
             care_type=outcome,
             flags=sorted(flags),
@@ -81,18 +90,21 @@ class PlannerEngine:
             raw_rule=rule_name,
         )
 
-    # ---- evaluate answers to flags + scores ----
+    # -------- internals --------
     def _evaluate(self, answers: Dict[str, int]) -> Tuple[Set[str], Dict[str, int], List[str]]:
+        """Turn raw answers into flags + scores using JSON triggers + flag_to_category_mapping."""
         flags: Set[str] = set()
         debug: List[str] = []
 
-        # questions in JSON are iterated 1..N to match UI "q1..qN" keys
+        # IMPORTANT: questions in the UI are saved as q1..qN (1-based)
         for idx, q in enumerate(self.qa.get("questions", []), start=1):
             qk = f"q{idx}"
             a = answers.get(qk)
             if a is None:
                 continue
-            for _cat, tlist in q.get("trigger", {}).items():
+
+            triggers = q.get("trigger", {})
+            for _cat, tlist in triggers.items():
                 for t in tlist:
                     if "answer" in t and int(t["answer"]) == int(a):
                         fl = t.get("flag")
@@ -100,23 +112,41 @@ class PlannerEngine:
                             flags.add(fl)
                             debug.append(f"{qk}={a} → flag {fl}")
 
-        # score categories for any triggered flags
+        # Map flags to categories for scoring
         cats = {self.flag2cat[fl] for fl in flags if fl in self.flag2cat}
-        in_score = sum(self.sc_in.get(c, 0) for c in cats)
-        al_score = sum(self.sc_al.get(c, 0) for c in cats)
-        scores = {"in_home_score": in_score, "assisted_living_score": al_score}
-        debug.append(f"scores: in_home={in_score} al={al_score}")
+        if cats:
+            debug.append(f"categories: {sorted(cats)}")
+
+        in_home_score = sum(self.sc_in.get(c, 0) for c in cats)
+        al_score      = sum(self.sc_al.get(c, 0) for c in cats)
+
+        scores = {
+            "in_home_score": in_home_score,
+            "assisted_living_score": al_score,
+        }
+        debug.append(f"scores: in_home={in_home_score} al={al_score}")
         return flags, scores, debug
 
-    # ---- evidence-ranked decision (not first-match) ----
-    def _decide_best(self, flags: Set[str], scores: Dict[str, int]) -> Tuple[str, str]:
-        # Evaluate all rules, collect candidates with weights, then pick the best
+    def _decide_best(self, flags: Set[str], scores: Dict[str, int]) -> Tuple[str, str, List[str]]:
+        """
+        Evaluate ALL rules and pick the best candidate by:
+          1) rank weight (JSON-informed)
+          2) tie-breaker by outcome severity (memory > AL > in_home > none)
+        Memory-care override is **tightened**: it requires severe cognitive risk
+        + (no support OR high safety concern) **and** AL score >= AL threshold.
+        """
+        rank_log: List[str] = []
         candidates: List[Tuple[int, str, str]] = []  # (weight, rule_name, outcome)
 
-        # memory care fast-path
-        if "severe_cognitive_risk" in flags and any(fl in flags for fl in ["no_support", "high_safety_concern"]):
+        # Tight memory-care override (no accidental global trigger)
+        if (
+            "severe_cognitive_risk" in flags
+            and any(fl in flags for fl in ("no_support", "high_safety_concern"))
+            and scores.get("assisted_living_score", 0) >= self.al_min
+        ):
             candidates.append((self.rank_weights.get("memory_care_override", 100), "memory_care_override", "memory_care"))
 
+        # Evaluate JSON rules
         for rule in self.precedence:
             meta = self.rules.get(rule) or {}
             if self._match(rule, meta, flags, scores):
@@ -130,20 +160,27 @@ class PlannerEngine:
                 weight = self.rank_weights.get(rule, 5)
                 candidates.append((weight, rule, outcome))
 
+        # If nothing matched, fallback
         if not candidates:
-            # final fallback
-            return "no_care_needed", "none"
+            rank_log.append("CANDIDATES: none; fallback to no_care_needed")
+            return "no_care_needed", "none", rank_log
 
-        # choose highest weight; if tie, prefer higher care level as safety net
+        # Sort by (weight desc, severity desc)
         def outcome_rank(o: str) -> int:
             return {"memory_care": 3, "assisted_living": 2, "in_home": 1, "none": 0}.get(o, 0)
 
         candidates.sort(key=lambda x: (x[0], outcome_rank(x[2])), reverse=True)
-        top = candidates[0]
-        return top[1], top[2]
 
-    # ---- per-rule matchers aligning with JSON names ----
+        # Log the candidate list
+        pretty = [f"{r}→{o} (w={w})" for (w, r, o) in candidates]
+        rank_log.append("CANDIDATES: " + " | ".join(pretty))
+        top = candidates[0]
+        rank_log.append(f"CHOICE: {top[1]} → {top[2]}")
+
+        return top[1], top[2], rank_log
+
     def _match(self, rule_name: str, meta: Dict[str, Any], flags: Set[str], scores: Dict[str, int]) -> bool:
+        """Custom handlers for rule names we know. Unknown rules DO NOT auto-match."""
         f = flags; s = scores
         in_min = self.in_home_min; al_min = self.al_min; dep_min = self.dep_min
 
@@ -151,50 +188,73 @@ class PlannerEngine:
         def all_of(*need: str) -> bool: return all(n in f for n in need)
         def none_of(*ban: str) -> bool: return all(n not in f for n in ban)
 
+        if rule_name == "memory_care_override":
+            # Kept for JSON parity; we enforce the tighter check in _decide_best.
+            return (
+                "severe_cognitive_risk" in f
+                and any_of("no_support", "high_safety_concern")
+                and s.get("assisted_living_score", 0) >= al_min
+            )
+
         if rule_name == "dependence_flag_logic":
             to_count = self.rec.get("dependence_flag_logic", {}).get(
                 "trigger_if_flags",
                 ["high_dependence", "high_mobility_dependence", "no_support",
-                 "severe_cognitive_risk", "high_safety_concern"],
+                 "severe_cognitive_risk", "high_safety_concern"]
             )
             count = sum(1 for fl in to_count if fl in f)
             return count >= dep_min
 
         if rule_name == "assisted_living_score":
-            return s["assisted_living_score"] >= al_min
+            return s.get("assisted_living_score", 0) >= al_min
 
         if rule_name == "balanced_al":
-            return (s["assisted_living_score"] >= al_min and s["in_home_score"] >= in_min and
-                    none_of("high_dependence", "high_mobility_dependence", "no_support", "high_safety_concern", "severe_cognitive_risk"))
+            return (s.get("assisted_living_score", 0) >= al_min and
+                    s.get("in_home_score", 0) >= in_min and
+                    none_of("high_dependence", "high_mobility_dependence", "no_support",
+                            "high_safety_concern", "severe_cognitive_risk"))
 
         if rule_name == "in_home_with_mobility_challenges":
-            return (s["assisted_living_score"] >= al_min - 1 and s["in_home_score"] >= in_min and
+            return (s.get("assisted_living_score", 0) >= al_min - 1 and
+                    s.get("in_home_score", 0) >= in_min and
                     "high_mobility_dependence" in f and
                     none_of("moderate_cognitive_decline", "severe_cognitive_risk"))
 
         if rule_name == "in_home_possible_with_cognitive_and_safety_risks":
-            return (s["in_home_score"] >= in_min and s["assisted_living_score"] >= in_min and
-                    any_of("moderate_cognitive_decline", "severe_cognitive_risk", "moderate_safety_concern", "high_safety_concern"))
+            return (s.get("in_home_score", 0) >= in_min and
+                    s.get("assisted_living_score", 0) >= in_min and
+                    any_of("moderate_cognitive_decline", "severe_cognitive_risk",
+                           "moderate_safety_concern", "high_safety_concern"))
 
         if rule_name == "in_home_with_support_and_financial_needs":
-            return (s["in_home_score"] >= in_min and s["assisted_living_score"] < al_min and "needs_financial_assistance" in f)
+            return (s.get("in_home_score", 0) >= in_min and
+                    s.get("assisted_living_score", 0) < al_min and
+                    "needs_financial_assistance" in f)
 
         if rule_name == "independent_with_safety_concern":
-            return (none_of("moderate_cognitive_decline", "severe_cognitive_risk", "high_dependence", "high_mobility_dependence") and
+            return (none_of("moderate_cognitive_decline", "severe_cognitive_risk",
+                            "high_dependence", "high_mobility_dependence") and
                     any_of("moderate_safety_concern", "high_safety_concern"))
 
         if rule_name == "independent_no_support_risk":
-            return (none_of("moderate_cognitive_decline", "severe_cognitive_risk", "high_mobility_dependence") and "no_support" in f)
+            return (none_of("moderate_cognitive_decline", "severe_cognitive_risk",
+                            "high_mobility_dependence") and
+                    "no_support" in f)
 
         if rule_name == "no_care_needed":
-            return (s["assisted_living_score"] < in_min and s["in_home_score"] < in_min and
-                    none_of("high_dependence", "high_mobility_dependence", "no_support", "severe_cognitive_risk",
-                            "high_safety_concern", "moderate_cognitive_decline", "moderate_safety_concern", "high_risk"))
+            return (s.get("assisted_living_score", 0) < in_min and
+                    s.get("in_home_score", 0) < in_min and
+                    none_of("high_dependence", "high_mobility_dependence", "no_support",
+                            "severe_cognitive_risk", "high_safety_concern",
+                            "moderate_cognitive_decline", "moderate_safety_concern", "high_risk"))
 
-        # If we don't have a custom matcher, allow it so narrative/outcome still render
-        return True
+        if rule_name == "in_home_with_support_fallback":
+            return True  # last resort fallback
 
-    # ---- narrative rendering ----
+        # Unknown rule names do NOT auto-match (prevents noisy candidates)
+        return False
+
+    # ------------- narrative rendering -------------
     def _rand(self, seq: List[str]) -> str:
         return random.choice(seq) if seq else ""
 
@@ -208,15 +268,16 @@ class PlannerEngine:
         meta = self.rules.get(rule_name, {})
         template = meta.get("message_template", "")
 
-        # key issues
+        # {key_issues}
         phrases: List[str] = []
+        issue_catalog: Dict[str, List[str]] = self.rec.get("issue_phrases", {})
         for flg in flags:
-            variants = self.rec.get("issue_phrases", {}).get(flg, [])
+            variants = issue_catalog.get(flg, [])
             if variants:
                 phrases.append(random.choice(variants))
         key_issues = ", ".join(phrases) if phrases else "your current situation"
 
-        # preference clause
+        # {preference_clause}
         if "strongly_prefers_home" in flags:
             pref_key = "strongly_prefers_home"
         elif "prefers_home" in flags:
@@ -253,7 +314,7 @@ class CalculatorEngine:
         pass
 
     def monthly_cost(self, inputs: Any) -> int:
-        # Fallback only — real per-scenario math comes from cost_controls/asset_engine.
+        # Fallback only — per-scenario math comes from cost_controls/asset_engine.
         care_type = getattr(inputs, "care_type", "in_home")
         base = {"in_home": 4000, "assisted_living": 6500, "memory_care": 8500, "none": 0}
         return int(base.get(care_type, 4000))
