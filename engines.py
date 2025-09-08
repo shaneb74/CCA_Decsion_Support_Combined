@@ -329,3 +329,27 @@ class CalculatorEngine:
         care_type = getattr(inputs, "care_type", "in_home")
         base = {"in_home": 4000, "assisted_living": 6500, "memory_care": 8500, "none": 0}
         return int(base.get(care_type, 4000))
+
+
+# ----------------------------- Compatibility helper -----------------------------
+
+def resolve_narrative(obj: Any) -> str:
+    """
+    Back-compat for older app.py that imports `resolve_narrative` from engines.
+    Returns the best available narrative/advisory/message string.
+    Accepts either a PlannerResult or a dict-like object.
+    """
+    # PlannerResult instance
+    if hasattr(obj, "__dict__"):
+        for attr in ("narrative", "advisory", "message", "message_rendered"):
+            val = getattr(obj, attr, None)
+            if isinstance(val, str) and val.strip():
+                return val
+        return ""
+    # dict-like
+    if isinstance(obj, dict):
+        for key in ("narrative", "advisory", "message", "message_rendered"):
+            val = obj.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+    return ""
