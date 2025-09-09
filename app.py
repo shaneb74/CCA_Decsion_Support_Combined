@@ -313,9 +313,9 @@ elif st.session_state.step == "recommendations":
             "memory_care": "Memory Care",
         }
         st.subheader(f"{name}: {nice.get(care_type, care_type).title()} (recommended)")
-        if reasons:
-            for r in reasons:
-                st.write("• " + str(r))
+        #if reasons:
+        #    for r in reasons:
+        #       st.write("• " + str(r))
         if narrative:
             st.info(narrative)
 
