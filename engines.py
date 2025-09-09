@@ -1,4 +1,4 @@
-# engines.py — Best-fit, JSON-driven recommendation engine
+# engines.py — Best-fit, JSON-driven recommendation engine (fixed override + strict matching)
 from __future__ import annotations
 
 import json
@@ -34,7 +34,6 @@ class PlannerEngine:
         with open(rec_path, "r", encoding="utf-8") as f:
             self.rec: Dict[str, Any] = json.load(f)
 
-        # Core sections we rely on (fall back safely)
         self.rules: Dict[str, Dict[str, Any]] = self.rec.get("final_recommendation", {})
         self.precedence: List[str] = self.rec.get("decision_precedence", list(self.rules.keys()))
         self.thresholds: Dict[str, Any] = self.rec.get("final_decision_thresholds", {})
@@ -55,30 +54,21 @@ class PlannerEngine:
         self.al_min      = _num(self.thresholds.get("assisted_living_min"), 6)
         self.dep_min     = _num(self.thresholds.get("dependence_flags_min"), 2)
 
-        # Per-rule weights (higher = stronger recommendation). We also infer weights by name.
+        # Per-rule weights (higher = stronger recommendation). We also infer by outcome name.
         self.rank_weights: Dict[str, int] = {
-            # hard overrides
             "memory_care_override": 100,
-
-            # strong AL
             "assisted_living": 70,
             "moderate_needs_assisted_living_recommendation": 70,
             "close_to_assisted_living_with_moderate_needs": 60,
             "assisted_living_score": 60,
-
-            # balanced / nuanced in-home
             "in_home_possible_with_cognitive_and_safety_risks": 50,
             "balanced_recommendation": 40,
             "in_home_with_support": 35,
             "in_home_with_uncertain_support": 32,
             "in_home_score": 30,
             "in_home_with_mobility_challenges": 30,
-
-            # independents
             "independent_with_safety_concern": 20,
             "independent_no_support_risk": 18,
-
-            # explicit none
             "no_care_needed": 10,
         }
 
@@ -182,7 +172,6 @@ class PlannerEngine:
 
         # If nothing matched, add safe fallbacks
         if not candidates:
-            # Prefer "in_home_with_support" if available, else "no_care_needed"
             if "in_home_with_support" in self.rules:
                 candidates.append((self._weight_for("in_home_with_support", "in_home"), "in_home_with_support", "in_home"))
             else:
@@ -211,7 +200,6 @@ class PlannerEngine:
         def tiebreak_key(item: Tuple[int, str, str]):
             w, rule, outcome = item
             sev = self.severity_rank.get(outcome, 0)
-            # within outcome type, prefer higher relevant score
             if outcome == "assisted_living":
                 score = scores.get("assisted_living_score", 0)
             elif outcome == "in_home":
@@ -237,10 +225,14 @@ class PlannerEngine:
         al_min: int,
         dep_min: int,
     ) -> bool:
-        """Known rule handlers. Unknown rules pass to allow JSON-supplied outcomes/messages."""
+        """Known rule handlers. Unknown rules must NOT auto-match."""
         def any_of(*need: str) -> bool: return any(n in f for n in need)
         def all_of(*need: str) -> bool: return all(n in f for n in need)
         def none_of(*ban: str) -> bool: return all(n not in f for n in ban)
+
+        # *** FIX 1: explicit guard for the override ***
+        if rule_name == "memory_care_override":
+            return "severe_cognitive_risk" in f and ("no_support" in f or "high_safety_concern" in f)
 
         if rule_name == "dependence_flag_logic":
             to_count = self.dep_logic_cfg.get(
@@ -330,8 +322,8 @@ class PlannerEngine:
                 )
             )
 
-        # If we don't have a named handler, allow it so the JSON can still supply outcome/message
-        return True
+        # *** FIX 2: unknown rules should NOT auto-match ***
+        return False
 
     def _infer_outcome(self, rule_name: str, meta: Dict[str, Any]) -> str:
         outcome = meta.get("outcome")
@@ -349,7 +341,6 @@ class PlannerEngine:
     def _weight_for(self, rule_name: str, outcome: str) -> int:
         if rule_name in self.rank_weights:
             return self.rank_weights[rule_name]
-        # Infer sensible default by outcome
         if outcome == "memory_care":
             return 100
         if outcome == "assisted_living":
@@ -364,7 +355,7 @@ class PlannerEngine:
         meta = self.rules.get(rule_name, {})
         template = meta.get("message_template", "")
 
-        # Build {key_issues} from issue phrases
+        # {key_issues}
         phrases: List[str] = []
         issue_catalog: Dict[str, List[str]] = self.rec.get("issue_phrases", {})
         for flg in flags:
@@ -373,7 +364,7 @@ class PlannerEngine:
                 phrases.append(random.choice(opts))
         key_issues = ", ".join(phrases) if phrases else "your current situation"
 
-        # Build {preference_clause}
+        # {preference_clause}
         if "strongly_prefers_home" in flags:
             pref_key = "strongly_prefers_home"
         elif "prefers_home" in flags:
