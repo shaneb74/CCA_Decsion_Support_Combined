@@ -1,11 +1,10 @@
-# engines.py — Planner + Calculator engines
+# engines.py — Planner + Calculator engines (memory-care strictly gated)
 from __future__ import annotations
 
 import json
 import random
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
@@ -23,9 +22,9 @@ class PlannerResult:
 # ----------------------------- PlannerEngine -----------------------------
 class PlannerEngine:
     """
-    Reads:
-      - question_answer_logic_FINAL_UPDATED.json  (Q&A / triggers)
-      - recommendation_logic_FINAL_MASTER_UPDATED.json (scoring + rules + narrative)
+    Uses:
+      - question_answer_logic_FINAL_UPDATED.json  (Q&A, triggers)
+      - recommendation_logic_FINAL_MASTER_UPDATED.json (scoring, rules, narrative)
     Produces a PlannerResult from {"q1": int, ...}.
     """
 
@@ -39,7 +38,6 @@ class PlannerEngine:
         self.precedence: List[str] = self.rec.get("decision_precedence", list(self.rules.keys()))
         self.thresholds = self.rec.get("final_decision_thresholds", {})
 
-        # thresholds (accept numeric or ">= N")
         def _num(v, d):
             if isinstance(v, (int, float)):
                 return int(v)
@@ -51,13 +49,12 @@ class PlannerEngine:
 
         self.in_min = _num(self.thresholds.get("in_home_min"), 3)
         self.al_min = _num(self.thresholds.get("assisted_living_min"), 6)
-        # dependence “N or more”
+
         dep_cfg = self.rec.get("dependence_flag_logic", {}).get("criteria", "")
         m = re.search(r"(\d+)\s*or more", dep_cfg)
         self.dep_min = int(m.group(1)) if m else _num(self.thresholds.get("dependence_flags_min"), 2)
 
-        # weights for evidence-based selection (higher beats lower)
-        # If present in the JSON, these can be overridden via "rule_weights".
+        # Evidence weights (can be overridden in JSON "rule_weights")
         self.rule_weights = {
             "memory_care_override": 100,
             "assisted_living": 70,
@@ -80,14 +77,14 @@ class PlannerEngine:
     def run(self, answers: Dict[str, int], *, name: str = "You") -> PlannerResult:
         flags, scores, debug = self._evaluate(answers)
 
-        # STRICT memory-care override (only when truly warranted)
+        # STRICT memory-care override (requires SEVERE + (no support OR high safety))
         if ("severe_cognitive_risk" in flags) and (("no_support" in flags) or ("high_safety_concern" in flags)):
             rule = "memory_care_override"
             narrative = self._render(rule, flags, scores, name)
             return PlannerResult("memory_care", sorted(flags), scores, debug, narrative, raw_rule=rule)
 
-        # Evaluate all rules -> candidates; pick highest weight (best evidence)
-        candidates: List[Tuple[str, str, int]] = []  # (rule_name, outcome, weight)
+        # Evaluate all rules → candidates
+        candidates: List[Tuple[str, str, int]] = []  # (rule, outcome, weight)
         for rule in self.precedence:
             meta = self.rules.get(rule)
             if not meta:
@@ -103,7 +100,11 @@ class PlannerEngine:
                 weight = int(self.rule_weights.get(rule, 0))
                 candidates.append((rule, outcome, weight))
 
-        # If no candidates, fallback
+        # HARD FILTER: no Memory Care unless severe cognitive risk is present.
+        if "severe_cognitive_risk" not in flags:
+            candidates = [(r, o, w) for (r, o, w) in candidates if o != "memory_care"]
+
+        # Fallbacks if nothing left
         if not candidates:
             if "in_home_with_support_fallback" in self.rules:
                 rule = "in_home_with_support_fallback"
@@ -113,12 +114,11 @@ class PlannerEngine:
             narrative = self._render(rule, flags, scores, name)
             return PlannerResult("none", sorted(flags), scores, debug, narrative, raw_rule=rule)
 
-        # choose highest weight (tie -> keep higher assisted/memory if present)
-        candidates.sort(key=lambda t: (t[2],
-                                       3 if t[1] == "memory_care" else 2 if t[1] == "assisted_living" else 1),
+        # Pick highest weight; on ties: Memory > Assisted > In-home (since MC is now gated)
+        candidates.sort(key=lambda t: (t[2], 2 if t[1] == "assisted_living" else 1 if t[1] == "in_home" else 0),
                         reverse=True)
         best_rule, best_outcome, _ = candidates[0]
-        debug.append(f"CANDIDATES: " + " | ".join(f"{r}->{o} (w={w})" for r, o, w in candidates))
+        debug.append("CANDIDATES: " + " | ".join(f"{r}->{o} (w={w})" for r, o, w in candidates))
         debug.append(f"CHOICE: {best_rule} -> {best_outcome}")
 
         narrative = self._render(best_rule, flags, scores, name)
@@ -129,8 +129,7 @@ class PlannerEngine:
         flags: Set[str] = set()
         debug: List[str] = []
 
-        questions = self.qa.get("questions", [])
-        for idx, q in enumerate(questions, start=1):
+        for idx, q in enumerate(self.qa.get("questions", []), start=1):
             qk = f"q{idx}"
             a = answers.get(qk)
             if a is None:
@@ -144,7 +143,7 @@ class PlannerEngine:
                             flags.add(fl)
                             debug.append(f"{qk}={a} -> flag {fl}")
 
-        # score mapping
+        # category scoring
         cat_map: Dict[str, str] = self.rec.get("flag_to_category_mapping", {})
         categories = sorted({cat_map[f] for f in flags if f in cat_map})
         if categories:
@@ -162,7 +161,6 @@ class PlannerEngine:
         def all_of(*need: str) -> bool: return all(n in f for n in need)
         def none_of(*ban: str) -> bool: return all(n not in f for n in ban)
 
-        # concrete rule handlers (aligned with your JSON names)
         if rule == "dependence_flag_logic":
             to_count = self.rec.get("dependence_flag_logic", {}).get(
                 "trigger_if_flags",
@@ -229,10 +227,10 @@ class PlannerEngine:
                                 "severe_cognitive_risk", "high_safety_concern",
                                 "moderate_cognitive_decline", "moderate_safety_concern", "high_risk"))
 
-        # Unrecognized rules default to “allowed” so they can still render outcomes/messages.
+        # Unrecognized: allow
         return True
 
-    # ---- narrative rendering
+    # ---- narrative
     def _rand(self, seq: List[str]) -> str:
         return random.choice(seq) if seq else ""
 
@@ -247,7 +245,6 @@ class PlannerEngine:
         meta = self.rules.get(rule, {})
         template = meta.get("message_template", "")
 
-        # key issues
         phrases: List[str] = []
         catalog: Dict[str, List[str]] = self.rec.get("issue_phrases", {})
         for flg in flags:
@@ -255,7 +252,6 @@ class PlannerEngine:
                 phrases.append(random.choice(catalog[flg]))
         key_issues = ", ".join(phrases) if phrases else "your current situation"
 
-        # preference clause
         if "strongly_prefers_home" in flags:
             pref_key = "strongly_prefers_home"
         elif "prefers_home" in flags:
@@ -288,38 +284,21 @@ class PlannerEngine:
 # ----------------------------- CalculatorEngine -----------------------------
 class CalculatorEngine:
     """
-    Deterministic, UI-driven cost model. Reads attributes off `inputs` (SimpleNamespace-like).
-    Supported attributes (with defaults):
-      - state: str ("National")  -> location factor
-      - care_type: "none" | "in_home" | "assisted_living" | "memory_care"
-
-      Assisted Living:
-        - al_care_level: "Low" | "Medium" | "High"
-        - al_room_type: "Studio" | "1 Bedroom" | "2 Bedroom"
-        - al_mobility: "Independent" | "Some assistance" | "Extensive assistance"
-        - al_conditions: "None" | "Some" | "Complex"
-
-      In-Home:
-        - ih_hours_per_day: int (default 4)
-        - ih_days_per_month: int (default 20)
-        - ih_caregiver_type: "agency" | "private" (default "agency")
-
-      Memory Care:
-        - mc_care_level: "Low" | "Medium" | "High"
-        - mc_mobility: "Independent" | "Some assistance" | "Extensive assistance"
-        - mc_conditions: "None" | "Some" | "Complex"
+    Cost model reads attributes on `inputs`:
+      state, care_type
+      AL: al_care_level, al_room_type, al_mobility, al_conditions
+      IH: ih_hours_per_day, ih_days_per_month, ih_caregiver_type
+      MC: mc_care_level, mc_mobility, mc_conditions
     """
 
-    # national baselines (can be tuned or even externalized)
     BASE = {
         "none": 0,
-        "in_home_hourly": 32,         # baseline $/hr nationally (agency)
-        "in_home_hourly_private": 26,  # private-hire rough rate
-        "assisted_living": 6500,      # baseline package
+        "in_home_hourly": 32,
+        "in_home_hourly_private": 26,
+        "assisted_living": 6500,
         "memory_care": 8500,
     }
 
-    # location multipliers (expand as needed)
     LOCATION = {
         "National": 1.00,
         "Washington": 1.15,
@@ -328,13 +307,11 @@ class CalculatorEngine:
         "Florida": 1.05,
     }
 
-    # Assisted Living multipliers
     AL_CARE_LEVEL = {"Low": 1.00, "Medium": 1.10, "High": 1.25}
     AL_ROOM_TYPE  = {"Studio": 0.95, "1 Bedroom": 1.00, "2 Bedroom": 1.15}
     AL_MOBILITY   = {"Independent": 1.00, "Some assistance": 1.08, "Extensive assistance": 1.18}
     AL_CONDITIONS = {"None": 1.00, "Some": 1.06, "Complex": 1.14}
 
-    # Memory Care multipliers
     MC_CARE_LEVEL = {"Low": 1.00, "Medium": 1.10, "High": 1.25}
     MC_MOBILITY   = {"Independent": 1.00, "Some assistance": 1.05, "Extensive assistance": 1.12}
     MC_CONDITIONS = {"None": 1.00, "Some": 1.08, "Complex": 1.18}
@@ -342,66 +319,41 @@ class CalculatorEngine:
     def __init__(self, *args, **kwargs):
         pass
 
-    # tiny helper
-    def _get(self, obj: Any, name: str, default: Any):
-        return getattr(obj, name, default)
+    def _get(self, o: Any, k: str, d: Any): return getattr(o, k, d)
+    def _loc(self, i: Any) -> float: return float(self.LOCATION.get(str(self._get(i, "state", "National")), 1.0))
 
-    def _location_factor(self, inputs: Any) -> float:
-        state = self._get(inputs, "state", "National")
-        return float(self.LOCATION.get(str(state), 1.00))
-
-    # ---- Assisted Living
-    def _cost_assisted_living(self, inputs: Any) -> int:
+    def _cost_assisted_living(self, i: Any) -> int:
         base = self.BASE["assisted_living"]
-        f_loc = self._location_factor(inputs)
-
-        care_level = self._get(inputs, "al_care_level", "Medium")
-        room_type  = self._get(inputs, "al_room_type", "1 Bedroom")
-        mobility   = self._get(inputs, "al_mobility", "Independent")
-        cond       = self._get(inputs, "al_conditions", "None")
-
         mult = (
-            self.AL_CARE_LEVEL.get(care_level, 1.10) *
-            self.AL_ROOM_TYPE.get(room_type, 1.00) *
-            self.AL_MOBILITY.get(mobility, 1.00) *
-            self.AL_CONDITIONS.get(cond, 1.00)
+            self.AL_CARE_LEVEL.get(self._get(i, "al_care_level", "Medium"), 1.10) *
+            self.AL_ROOM_TYPE.get(self._get(i, "al_room_type", "1 Bedroom"), 1.00) *
+            self.AL_MOBILITY.get(self._get(i, "al_mobility", "Independent"), 1.00) *
+            self.AL_CONDITIONS.get(self._get(i, "al_conditions", "None"), 1.00)
         )
-        return int(round(base * f_loc * mult))
+        return int(round(base * self._loc(i) * mult))
 
-    # ---- In-Home Care
-    def _cost_in_home(self, inputs: Any) -> int:
-        # hours/day * days/month * hourly * location
-        hours = int(self._get(inputs, "ih_hours_per_day", 4))
-        days  = int(self._get(inputs, "ih_days_per_month", 20))
-        care  = str(self._get(inputs, "ih_caregiver_type", "agency")).lower()
+    def _cost_in_home(self, i: Any) -> int:
+        hours = int(self._get(i, "ih_hours_per_day", 4))
+        days  = int(self._get(i, "ih_days_per_month", 20))
+        care  = str(self._get(i, "ih_caregiver_type", "agency")).lower()
         hourly = self.BASE["in_home_hourly_private"] if care == "private" else self.BASE["in_home_hourly"]
-        f_loc = self._location_factor(inputs)
-        return int(round(hours * days * hourly * f_loc))
+        return int(round(hours * days * hourly * self._loc(i)))
 
-    # ---- Memory Care
-    def _cost_memory_care(self, inputs: Any) -> int:
+    def _cost_memory_care(self, i: Any) -> int:
         base = self.BASE["memory_care"]
-        f_loc = self._location_factor(inputs)
-
-        care_level = self._get(inputs, "mc_care_level", "Medium")
-        mobility   = self._get(inputs, "mc_mobility", "Some assistance")
-        cond       = self._get(inputs, "mc_conditions", "Some")
-
         mult = (
-            self.MC_CARE_LEVEL.get(care_level, 1.10) *
-            self.MC_MOBILITY.get(mobility, 1.05) *
-            self.MC_CONDITIONS.get(cond, 1.08)
+            self.MC_CARE_LEVEL.get(self._get(i, "mc_care_level", "Medium"), 1.10) *
+            self.MC_MOBILITY.get(self._get(i, "mc_mobility", "Some assistance"), 1.05) *
+            self.MC_CONDITIONS.get(self._get(i, "mc_conditions", "Some"), 1.08)
         )
-        return int(round(base * f_loc * mult))
+        return int(round(base * self._loc(i) * mult))
 
-    # ---- public API
     def monthly_cost(self, inputs: Any) -> int:
-        care_type = str(self._get(inputs, "care_type", "in_home")).lower()
-        if care_type == "none":
+        ct = str(self._get(inputs, "care_type", "in_home")).lower()
+        if ct == "none":
             return 0
-        if care_type in ("assisted_living", "assisted living"):
+        if ct in ("assisted_living", "assisted living"):
             return self._cost_assisted_living(inputs)
-        if care_type in ("memory_care", "memory care"):
+        if ct in ("memory_care", "memory care"):
             return self._cost_memory_care(inputs)
-        # default: in-home
         return self._cost_in_home(inputs)
