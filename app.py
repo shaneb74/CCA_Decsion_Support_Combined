@@ -416,45 +416,137 @@ elif st.session_state.step == "household":
             st.session_state.step = "intro"
             st.rerun()
 
-# BREAKDOWN (lightweight numeric — charts removed to avoid runtime deps)
+# BREAKDOWN (detailed)
 elif st.session_state.step == "breakdown":
     st.header("Detailed Breakdown")
 
-    people = st.session_state.get("people", [])
-    costs = st.session_state.get("person_costs", {})
-
-    care_total = sum(int(costs.get(p["id"], 0)) for p in people)
+    def money(n: int | float) -> str:
+        try:
+            return f"${int(round(float(n))):,}"
+        except Exception:
+            return "$0"
 
     s = st.session_state
-    inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
-    inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0))
-    inc_house = int(s.get("hh_rent", 0)) + int(s.get("hh_annuity", 0)) + int(s.get("hh_invest", 0)) + int(s.get("hh_trust", 0)) + int(s.get("hh_other", 0))
+    people = s.get("people", [])
+    # person_costs: set by cost_controls.render_costs_for_active_recommendations()
+    person_costs: dict = s.get("person_costs", {})
 
-    va_A = int(s.get("a_va_monthly", 0))
-    va_B = int(s.get("b_va_monthly", 0))
+    # ---------- Per-person costs (line items) ----------
+    st.subheader("Care Costs by Person")
+    care_rows = []
+    care_total = 0
+    for p in people:
+        pid = p["id"]
+        name = p["display_name"]
+        # scenario selection: set in recommendations (care_overrides) or default to engine result
+        rec = s.get("planner_results", {}).get(pid, None)
+        default_care = getattr(rec, "care_type", None) if rec else None
+        scenario = s.get("care_overrides", {}).get(pid, default_care) or "none"
+        cost = int(person_costs.get(pid, 0))
 
+        # Try to show knobs chosen in cost planner (if present in session_state)
+        def pick(key_base: str):
+            return s.get(f"{key_base}_{pid}") or s.get(key_base) or "—"
+
+        if scenario == "assisted_living":
+            detail = ", ".join([
+                f"Care: {pick('al_care_level')}",
+                f"Room: {pick('al_room_type')}",
+                f"Mobility: {pick('al_mobility')}",
+                f"Conditions: {pick('al_conditions')}",
+            ])
+        elif scenario == "memory_care":
+            detail = ", ".join([
+                f"Care: {pick('mc_care_level')}",
+                f"Mobility: {pick('mc_mobility')}",
+                f"Conditions: {pick('mc_conditions')}",
+            ])
+        elif scenario == "in_home":
+            hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4))
+            days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
+            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
+            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
+        else:
+            detail = "—"
+
+        care_rows.append({
+            "Person": name,
+            "Scenario": scenario.replace("_", " ").title(),
+            "Details": detail,
+            "Monthly Cost": money(cost),
+        })
+        care_total += cost
+
+    if care_rows:
+        st.table(care_rows)
+    else:
+        st.info("No care costs yet. Choose a scenario in the Cost Planner.")
+
+    # ---------- Other selected monthly costs ----------
+    st.subheader("Additional Monthly Costs (Selected)")
     home_monthly = int(s.get("home_monthly_total", 0))
     mods_monthly = int(s.get("mods_monthly_total", 0))
     other_monthly = int(s.get("other_monthly_total", 0))
-    addl_costs = home_monthly + mods_monthly + other_monthly
+    addl_total = home_monthly + mods_monthly + other_monthly
+    st.table([
+        {"Category": "Home decisions", "Monthly": money(home_monthly)},
+        {"Category": "Home modifications", "Monthly": money(mods_monthly)},
+        {"Category": "Other monthly costs", "Monthly": money(other_monthly)},
+        {"Category": "Subtotal (additional)", "Monthly": money(addl_total)},
+    ])
+
+    # ---------- Income (by source) ----------
+    st.subheader("Monthly Income")
+    # Individual income A / B (as used by household drawers)
+    inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
+    inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0))
+    inc_house = int(s.get("hh_rent", 0)) + int(s.get("hh_annuity", 0)) + int(s.get("hh_invest", 0)) + int(s.get("hh_trust", 0)) + int(s.get("hh_other", 0))
+    va_A = int(s.get("a_va_monthly", 0))
+    va_B = int(s.get("b_va_monthly", 0))
+    income_total = inc_A + inc_B + inc_house + va_A + va_B
+
+    st.table([
+        {"Source": "Individual A (SS + Pension + Other)", "Monthly": money(inc_A)},
+        {"Source": "Individual B (SS + Pension + Other)", "Monthly": money(inc_B)},
+        {"Source": "Household / Shared (rent, annuity, investments, trust, other)", "Monthly": money(inc_house)},
+        {"Source": "VA — A", "Monthly": money(va_A)},
+        {"Source": "VA — B", "Monthly": money(va_B)},
+        {"Source": "Total Income", "Monthly": money(income_total)},
+    ])
+
+    # ---------- Totals & runway ----------
+    st.subheader("Totals")
+    monthly_need = care_total + addl_total
+    gap = monthly_need - income_total
 
     assets_common = int(s.get("assets_common_total", 0))
     assets_detail = int(s.get("assets_detailed_total", 0))
     assets_total = assets_common + assets_detail
 
-    income_total = inc_A + inc_B + inc_house + va_A + va_B
-    monthly_need = care_total + addl_costs
-    gap = monthly_need - income_total
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Monthly Care + Selected Costs", money(monthly_need))
+    col2.metric("Total Monthly Income (incl. VA)", money(income_total))
+    col3.metric("Estimated Monthly Gap", money(gap))
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Monthly Care + Selected Costs", f"${monthly_need:,.0f}")
-    c2.metric("Total Monthly Income (incl. VA)", f"${income_total:,.0f}")
-    c3.metric("Estimated Monthly Gap", f"${gap:,.0f}")
-
-    years = 0.0
+    # runway (years + months for readability)
     if gap > 0 and assets_total > 0:
-        years = round(assets_total / max(gap, 1), 1)
-    st.subheader(f"Estimated runway from assets: {years} years")
+        months = int(assets_total // max(gap, 1))
+        years = months // 12
+        rem_months = months % 12
+        if years > 0:
+            st.subheader(f"Estimated runway from assets: {years} years, {rem_months} months")
+        else:
+            st.subheader(f"Estimated runway from assets: {rem_months} months")
+    else:
+        st.subheader("Estimated runway from assets: 0.0 years")
+
+    # Optional: show assets roll-up
+    with st.expander("Assets (for context)"):
+        st.table([
+            {"Assets": "Common assets (cash, investments, etc.)", "Amount": money(assets_common)},
+            {"Assets": "Detailed assets (home sale, etc.)", "Amount": money(assets_detail)},
+            {"Assets": "Total assets", "Amount": money(assets_total)},
+        ])
 
     st.divider()
     b1, b2 = st.columns(2)
@@ -466,8 +558,3 @@ elif st.session_state.step == "breakdown":
         if st.button("Back to Costs"):
             st.session_state.step = "calculator"
             st.rerun()
-
-# Fallback
-else:
-    reset_all()
-    st.rerun()
