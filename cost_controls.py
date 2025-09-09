@@ -129,10 +129,11 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     )
     return int(calc.monthly_cost(inputs))
 
-def render_costs_for_active_recommendations(*, calculator=None) -> int:
+def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> int:
     """
     Draw per-person scenario controls and compute monthly costs through CalculatorEngine.
     Returns combined total. Updates st.session_state.person_costs.
+    Accepts and ignores extra kwargs like planner= to stay compatible with app.py.
     """
     _init_person_costs()
     lf = float(st.session_state.get("location_factor", 1.0))
