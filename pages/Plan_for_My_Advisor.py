@@ -1,9 +1,7 @@
-# pages/Plan_for_My_Advisor.py — PFMA prototype (prefill + structured Optional)
-# Minimal scheduling up front; everything else as optional, checkbox/multiselect-based.
-
+# pages/Plan_for_My_Advisor.py — PFMA prototype (prefill + structured Optional; best-time-to-call)
 from __future__ import annotations
 import streamlit as st
-from datetime import date, time, timedelta
+from datetime import date
 
 # ---------- Fake defaults for fast prototyping (overridden by upstream session if present) ----------
 FAKE_DEFAULTS = {
@@ -11,8 +9,7 @@ FAKE_DEFAULTS = {
     "phone": "555-123-9876",
     "email": "pat.sample@example.com",
     "zip": "94107",
-    "appt_days_out": 2,
-    "appt_time": time(10, 30),
+    "best_time": "Weekday mornings",
 }
 
 # ---------- tiny helpers ----------
@@ -79,6 +76,7 @@ def render_pfma():
     st.session_state.setdefault("pfma_phone", _prefill("phone", FAKE_DEFAULTS["phone"]))
     st.session_state.setdefault("pfma_email", _prefill("email", FAKE_DEFAULTS["email"]))
     st.session_state.setdefault("pfma_zip", _prefill("zip", FAKE_DEFAULTS["zip"]))
+    st.session_state.setdefault("pfma_best_time", FAKE_DEFAULTS["best_time"])
 
     with st.form("pfma_booking_form"):
         st.subheader("Booking details")
@@ -99,12 +97,13 @@ def render_pfma():
         email = st.text_input("Email (optional)", value=st.session_state["pfma_email"], key="pfma_email")
         zipcode = st.text_input("ZIP code for care search", value=st.session_state["pfma_zip"], key="pfma_zip")
 
-        urgency = st.select_slider(
+        urgency = st.selectbox(
             "When do you need support?",
-            options=["Exploring (3+ months)", "Planning (1–3 months)", "Soon (2–4 weeks)", "ASAP (0–7 days)"],
-            value="Planning (1–3 months)",
+            ["Exploring (3+ months)", "Planning (1–3 months)", "Soon (2–4 weeks)", "ASAP (0–7 days)"],
+            index=1,
             key="pfma_urgency",
         )
+
         constraints = st.text_area(
             "Any must-haves or constraints? (optional)",
             placeholder="Pets allowed, near daughter in Seattle, budget cap, wheelchair accessible...",
@@ -117,22 +116,21 @@ def render_pfma():
             payer_idx = payer_options.index(calc["payer_hint"])
         payer_hint = st.selectbox("Primary payer (optional)", payer_options, index=payer_idx, key="pfma_payer_hint")
 
-        appt_date = st.date_input(
-            "Appointment date",
-            value=date.today() + timedelta(days=FAKE_DEFAULTS["appt_days_out"]),
-            key="pfma_appt_date",
+        best_time = st.text_input(
+            "Best time to call",
+            value=st.session_state["pfma_best_time"],
+            placeholder="E.g., weekday mornings, afternoons after 2pm",
+            key="pfma_best_time",
         )
-        appt_time = st.time_input("Appointment time", value=FAKE_DEFAULTS["appt_time"], key="pfma_appt_time")
 
         consent = st.checkbox("I agree to be contacted by an advisor", value=True, key="pfma_consent")
 
-        submitted = st.form_submit_button("Schedule appointment", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Schedule call", type="primary", use_container_width=True)
         if submitted:
             if not name or not phone or not zipcode:
                 st.error("Please complete the required fields (name, phone, ZIP).")
             else:
-                slot_str = f"{appt_date.isoformat()} {appt_time.strftime('%H:%M')}"
-                st.success(f"Appointment scheduled for {slot_str}. You're on the calendar.")
+                st.success(f"Call request submitted. We'll try to reach you around: {best_time}.")
                 st.session_state["pfma_step"] = "optional"
                 st.session_state["pfma_booking_data"] = {
                     "name": name,
@@ -143,7 +141,7 @@ def render_pfma():
                     "urgency": urgency,
                     "constraints": constraints,
                     "payer_hint": payer_hint,
-                    "slot": slot_str,
+                    "best_time": best_time,
                     "consent": consent,
                 }
 
