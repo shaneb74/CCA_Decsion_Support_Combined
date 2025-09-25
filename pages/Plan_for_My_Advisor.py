@@ -1,4 +1,4 @@
-# pages/Plan_for_My_Advisor.py — prefilled prototype, date/time picker, safe keys
+# pages/Plan_for_My_Advisor.py — prefilled prototype, date/time picker, safe keys, non-code summary
 import streamlit as st
 from datetime import date, time, timedelta
 
@@ -11,17 +11,23 @@ FAKE_DEFAULTS = {
     "appt_time": time(10, 30),
 }
 
+def _first_truthy(*vals, fallback=""):
+    for v in vals:
+        if v is not None and str(v).strip() != "":
+            return v
+    return fallback
+
 def _prefill(field, fallback):
-    # prefer any app-level session info, otherwise fallback to fake
+    # prefer any app-level session info, otherwise fallback to fake; treat empty strings as missing
     if field == "name":
-        return st.session_state.get("user_name", fallback)
+        return _first_truthy(st.session_state.get("user_name"), fallback, fallback=fallback)
     if field == "phone":
-        return st.session_state.get("user_phone", fallback)
+        return _first_truthy(st.session_state.get("user_phone"), fallback, fallback=fallback)
     if field == "email":
-        return st.session_state.get("user_email", fallback)
+        return _first_truthy(st.session_state.get("user_email"), fallback, fallback=fallback)
     if field == "zip":
         gc = st.session_state.get("gc_summary") or {}
-        return (gc.get("zip") or fallback)
+        return _first_truthy(gc.get("zip"), fallback, fallback=fallback)
     return fallback
 
 def render_pfma():
@@ -38,65 +44,56 @@ def render_pfma():
             st.markdown(f"**Suggested path:** {gc.get('care_path','—')}")
             flags = gc.get("flags") or []
             if flags:
-                cols = st.columns(min(4, max(1, len(flags))))
-                for i, f in enumerate(flags):
-                    with cols[i % len(cols)]:
-                        st.markdown(
-                            f"<div style='display:inline-block;padding:6px 10px;border-radius:999px;"
-                            "border:1px solid #e5e7eb;font-size:0.85rem;background:#fafafa;'>"
-                            f"🛈 {str(f).replace('_',' ').title()}</div>",
-                            unsafe_allow_html=True
-                        )
+                st.caption("Flags")
+                st.write(", ".join(str(f).replace("_"," ").title() for f in flags))
         else:
             st.info("No Guided Care Plan found. You can still book now.")
 
         if calc:
             st.subheader("Budget snapshot")
-            c1, c2, c3 = st.columns(3)
-            try:
-                c1.metric("Est. Monthly Cost", f"${float(calc.get('monthly_cost', 0)):,.0f}")
-            except Exception:
-                c1.metric("Est. Monthly Cost", calc.get('monthly_cost', '—'))
-            try:
-                c2.metric("Monthly Gap", f"${float(calc.get('monthly_gap', 0)):,.0f}")
-            except Exception:
-                c2.metric("Monthly Gap", calc.get('monthly_gap', '—'))
+            cols = st.columns(3)
+            try: cols[0].metric("Est. Monthly Cost", f"${float(calc.get('monthly_cost', 0)):,.0f}")
+            except Exception: cols[0].metric("Est. Monthly Cost", calc.get('monthly_cost', '—'))
+            try: cols[1].metric("Monthly Gap", f"${float(calc.get('monthly_gap', 0)):,.0f}")
+            except Exception: cols[1].metric("Monthly Gap", calc.get('monthly_gap', '—'))
             yf = calc.get("years_funded")
-            c3.metric("Years Funded", f"{float(yf):.1f}" if isinstance(yf,(int,float)) else "—")
+            cols[2].metric("Years Funded", f"{float(yf):.1f}" if isinstance(yf,(int,float)) else "—")
         else:
             st.info("No Cost Planner data yet. You can add numbers later or try the calculator after booking.")
 
     st.divider()
 
     # ---------------- Booking (prefilled) ----------------
+    # Seed widget state to ensure prefill even if widgets were mounted earlier
+    st.session_state.setdefault("pfma_name", _prefill("name", FAKE_DEFAULTS["name"]))
+    st.session_state.setdefault("pfma_phone", _prefill("phone", FAKE_DEFAULTS["phone"]))
+    st.session_state.setdefault("pfma_email", _prefill("email", FAKE_DEFAULTS["email"]))
+    st.session_state.setdefault("pfma_zip", _prefill("zip", FAKE_DEFAULTS["zip"]))
+
     with st.form("pfma_booking_form"):
         st.subheader("Booking details")
 
-        name = st.text_input("Your name", value=_prefill("name", FAKE_DEFAULTS["name"]), key="pfma_name")
+        name = st.text_input("Your name", value=st.session_state["pfma_name"], key="pfma_name")
         relationship = st.selectbox(
             "Your relationship to the care recipient",
             ["Self","Spouse/Partner","Adult Child","POA/Representative","Other"],
             index=0, key="pfma_relationship"
         )
-        phone = st.text_input("Best phone number", value=_prefill("phone", FAKE_DEFAULTS["phone"]), placeholder="+1 (___) ___-____", key="pfma_phone")
-        email = st.text_input("Email (optional)", value=_prefill("email", FAKE_DEFAULTS["email"]), key="pfma_email")
-        zipcode = st.text_input("ZIP code for care search", value=_prefill("zip", FAKE_DEFAULTS["zip"]), key="pfma_zip")
+        phone = st.text_input("Best phone number", value=st.session_state["pfma_phone"], placeholder="+1 (___) ___-____", key="pfma_phone")
+        email = st.text_input("Email (optional)", value=st.session_state["pfma_email"], key="pfma_email")
+        zipcode = st.text_input("ZIP code for care search", value=st.session_state["pfma_zip"], key="pfma_zip")
         urgency = st.select_slider("When do you need support?",
             options=["Exploring (3+ months)","Planning (1–3 months)","Soon (2–4 weeks)","ASAP (0–7 days)"],
             value="Planning (1–3 months)", key="pfma_urgency")
         constraints = st.text_area("Any must-haves or constraints? (optional)",
             placeholder="Pets allowed, near daughter in Seattle, budget cap, wheelchair accessible...", key="pfma_constraints")
 
-        # Primary payer prefill if calculator provided a hint; else leave default
         payer_options = ["Prefer not to say","Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"]
+        payer_idx = 0
         if calc and calc.get("payer_hint") in payer_options:
             payer_idx = payer_options.index(calc["payer_hint"])
-        else:
-            payer_idx = 0
         payer_hint = st.selectbox("Primary payer (optional)", payer_options, index=payer_idx, key="pfma_payer_hint")
 
-        # Appointment picker using date + time widgets, prefilled to +2 days at 10:30
-        from datetime import date, timedelta, time as _time
         appt_date = st.date_input("Appointment date", value=date.today() + timedelta(days=FAKE_DEFAULTS["appt_days_out"]), key="pfma_appt_date")
         appt_time = st.time_input("Appointment time", value=FAKE_DEFAULTS["appt_time"], key="pfma_appt_time")
 
@@ -122,12 +119,13 @@ def render_pfma():
 
         with st.expander("Financial snapshot (optional)"):
             if calc:
-                st.caption("We already have your Cost Planner details. Advisors will review them with you.")
-                st.json({
-                    "payer_hint": calc.get("payer_hint"),
-                    "income_keys": list((calc.get("income") or {}).keys()),
-                    "has_assets": bool(calc.get("assets")),
-                })
+                bullets = []
+                if calc.get("payer_hint"): bullets.append(f"Primary payer: {calc['payer_hint']}")
+                inc = calc.get("income") or {}
+                if inc: bullets.append(f"Income sources: {', '.join(inc.keys())}")
+                if calc.get("assets"): bullets.append("Assets on file")
+                if bullets: st.write("\n".join(f"- {b}" for b in bullets))
+                else: st.caption("We have some planner data on file.")
             else:
                 budget = st.select_slider("Do you know your realistic monthly care budget?",
                     options=["<$3,000","$3,000–$5,000","$5,000–$8,000",">$8,000"],
