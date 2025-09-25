@@ -141,7 +141,8 @@ if "step" not in st.session_state:
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all)
-
+# Add a persistent CTA to PFMA in the sidebar
+st.sidebar.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
 
 # ----------------------- Steps -----------------------------
 
@@ -159,9 +160,14 @@ Choosing senior living or in-home support can feel overwhelming.
 4. See a detailed breakdown and adjust anything.
 """
     )
-    if st.button("Start"):
-        st.session_state.step = "audience"
-        st.rerun()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Start"):
+            st.session_state.step = "audience"
+            st.rerun()
+    with c2:
+        # Clean, explicit jump to PFMA
+        st.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
 
 # AUDIENCE
 elif st.session_state.step == "audience":
@@ -363,6 +369,7 @@ elif st.session_state.step == "calculator":
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined_total:,.0f}")
 
+    st.divider()
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Back to recommendations"):
@@ -373,9 +380,7 @@ elif st.session_state.step == "calculator":
             st.session_state.step = "household"
             st.rerun()
     with c3:
-        if st.button("Finish"):
-            st.session_state.step = "intro"
-            st.rerun()
+        st.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
 
 # HOUSEHOLD (delegated to asset_engine for the drawers)
 elif st.session_state.step == "household":
@@ -482,7 +487,7 @@ elif st.session_state.step == "breakdown":
     else:
         st.info("No care costs yet. Choose a scenario in the Cost Planner.")
 
-    # ---------- Other selected monthly costs ----------
+    # ---------- Additional Monthly Costs ----------
     st.subheader("Additional Monthly Costs (Selected)")
     home_monthly = int(s.get("home_monthly_total", 0))
     mods_monthly = int(s.get("mods_monthly_total", 0))
@@ -497,7 +502,6 @@ elif st.session_state.step == "breakdown":
 
     # ---------- Income (by source) ----------
     st.subheader("Monthly Income")
-    # Individual income A / B (as used by household drawers)
     inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
     inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0))
     inc_house = int(s.get("hh_rent", 0)) + int(s.get("hh_annuity", 0)) + int(s.get("hh_invest", 0)) + int(s.get("hh_trust", 0)) + int(s.get("hh_other", 0))
@@ -528,7 +532,6 @@ elif st.session_state.step == "breakdown":
     col2.metric("Total Monthly Income (incl. VA)", money(income_total))
     col3.metric("Estimated Monthly Gap", money(gap))
 
-    # runway (years + months for readability)
     if gap > 0 and assets_total > 0:
         months = int(assets_total // max(gap, 1))
         years = months // 12
@@ -540,7 +543,6 @@ elif st.session_state.step == "breakdown":
     else:
         st.subheader("Estimated runway from assets: 0.0 years")
 
-    # Optional: show assets roll-up
     with st.expander("Assets (for context)"):
         st.table([
             {"Assets": "Common assets (cash, investments, etc.)", "Amount": money(assets_common)},
@@ -548,8 +550,9 @@ elif st.session_state.step == "breakdown":
             {"Assets": "Total assets", "Amount": money(assets_total)},
         ])
 
+# ---------- Bottom Navigation for main app ----------
 st.divider()
-b1, b2, b3 = st.columns(3)
+b1, b2, b3, b4 = st.columns(4)
 
 with b1:
     if st.button("Back to Household"):
@@ -563,6 +566,9 @@ with b2:
 
 with b3:
     if st.button("Back to Home"):
-        # You ARE home. Reset flow instead of switching pages.
+        # You're already in app.py; reset to intro instead of switching pages.
         st.session_state.step = "intro"
         st.rerun()
+
+with b4:
+    st.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
