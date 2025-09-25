@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 import traceback
-import json
 import streamlit as st
 
 # External cost UI helpers (single location control + per-person cost controls)
@@ -63,8 +62,7 @@ def _is_intlike(x) -> bool:
 
 
 def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
-    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'.
-    Logs an error if amap is invalid."""
+    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'."""
     if not isinstance(amap, dict) or not amap:
         st.error(f"Invalid or empty answer map: {amap}")
         return [], []
@@ -86,8 +84,7 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
 
 
 def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None) -> str | None:
-    """Render a radio from a JSON answer map and return the SELECTED KEY (string).
-    Handles invalid amap gracefully."""
+    """Render a radio from a JSON answer map and return the SELECTED KEY (string)."""
     if not isinstance(amap, dict) or not amap:
         st.warning(f"Skipping radio for '{label}' due to invalid answer map: {amap}")
         return default_key
@@ -124,11 +121,10 @@ def sidebar_pfma_link():
     st.sidebar.caption("Planner → Recommendations → Costs → Household")
     st.sidebar.button("Start over", on_click=reset_all, key="start_over_btn")
 
-    # Prefer page_link if available; fall back to external link
+    # Prefer page_link if available; fall back to external link (link_button has NO 'key' arg)
     try:
         st.sidebar.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
     except Exception:
-        # IMPORTANT: link_button has no 'key' arg. Keep it simple.
         st.sidebar.link_button(
             "Schedule with an Advisor",
             "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor",
@@ -188,11 +184,8 @@ Choosing senior living or in-home support can feel overwhelming.
             st.session_state.step = "audience"
             st.rerun()
     with c2:
-        # Quick way to open the PFMA prototype from the intro
+        # Static link to PFMA prototype from intro
         try:
-            if st.button("Open Advisor Prototype", key="intro_pfma_btn"):
-                st.session_state.step = "intro"  # no state change; use page link instead
-                st.rerun()
             st.page_link("pages/Plan_for_My_Advisor.py", label="Open Advisor Prototype", icon="📞")
         except Exception:
             st.link_button("Open Advisor Prototype", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
@@ -428,7 +421,7 @@ elif st.session_state.step == "household":
             st.session_state.step = "intro"
             st.rerun()
 
-# BREAKDOWN (detailed) — FIXED HEADER RENDERING
+# BREAKDOWN (detailed) — SAFE RENDERING
 elif st.session_state.step == "breakdown":
     st.header("Detailed Breakdown")
 
@@ -545,10 +538,8 @@ elif st.session_state.step == "breakdown":
     else:
         msg = "Estimated runway from assets: 0 months"
 
-    # Render as a single, safe subheader (no inline expression returning objects)
     st.subheader(msg)
 
-    # Optional: show assets roll-up
     with st.expander("Assets (for context)"):
         st.table([
             {"Assets": "Common assets (cash, investments, etc.)", "Amount": money(assets_common)},
