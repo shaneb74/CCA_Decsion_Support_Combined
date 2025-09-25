@@ -1,4 +1,4 @@
-# app.py — Senior Navigator (inline PFMA prototype, no fragile page switching)
+# app.py — Senior Navigator (PFMA inline, collision-safe)
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -116,7 +116,7 @@ if "step" not in st.session_state:
 
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
-st.sidebar.button("Start over", on_click=reset_all)
+st.sidebar.button("Start over", on_click=reset_all, key="sidebar_reset")
 
 # ---------------- Steps ----------------
 if st.session_state.step == "intro":
@@ -134,11 +134,11 @@ Choosing senior living or in-home support can feel overwhelming.
     )
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Start"):
+        if st.button("Start", key="intro_start"):
             st.session_state.step = "audience"
             st.rerun()
     with c2:
-        if st.button("Open Advisor Prototype"):
+        if st.button("Open Advisor Prototype", key="intro_open_pfma"):
             st.session_state.step = "pfma_dev"
             st.rerun()
 
@@ -152,7 +152,7 @@ elif st.session_state.step == "pfma_dev":
     else:
         render_pfma()
         st.divider()
-        if st.button("Back to Home"):
+        if st.button("Back to Home", key="pfma_back_home"):
             st.session_state.step = "intro"
             st.rerun()
 
@@ -179,7 +179,7 @@ elif st.session_state.step == "audience":
         rel = {"Myself": "self","My spouse/partner": "spouse","My parent": "parent","Someone else": "other"}[role]
         people.append({"id": "A","display_name": n,"relationship": rel})
 
-    if st.button("Continue"):
+    if st.button("Continue", key="aud_continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
         st.session_state.planner_results = {}
@@ -200,11 +200,11 @@ elif st.session_state.step == "spouse_interstitial":
     c1, c2 = st.columns(2)
     with c1:
         primary = st.session_state.people[0]["display_name"]
-        if st.button(f"No, just plan for **{primary}**"):
+        if st.button(f"No, just plan for **{primary}**", key="skip_spouse"):
             st.session_state.step = "planner"
             st.rerun()
     with c2:
-        if st.button("Add spouse/partner and continue", disabled=not st.session_state.get("care_partner_add", False)):
+        if st.button("Add spouse/partner and continue", key="add_spouse", disabled=not st.session_state.get("care_partner_add", False)):
             st.session_state.people.append({"id": "B","display_name": st.session_state.get("care_partner_name") or "Spouse/Partner","relationship": "spouse"})
             st.session_state.step = "planner"
             st.rerun()
@@ -230,7 +230,7 @@ elif st.session_state.step == "planner":
         if ans is not None:
             answers[f"q{q_idx}"] = int(ans)
 
-    if st.button("Save and continue"):
+    if st.button("Save and continue", key="plan_save_next"):
         if not answers:
             st.error("No answers provided. Please answer at least one question.")
         else:
@@ -260,7 +260,7 @@ elif st.session_state.step == "person_transition":
     name = people[i]["display_name"]
     st.header("Great — first plan saved.")
     st.info(f"Now let’s assess **{name}**.")
-    if st.button(f"Start {name}'s care plan"):
+    if st.button(f"Start {name}'s care plan", key="start_next_person"):
         st.session_state.step = "planner"
         st.rerun()
 
@@ -293,18 +293,14 @@ elif st.session_state.step == "recommendations":
         st.session_state.care_overrides[pid] = reverse[label]
         st.divider()
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, _ = st.columns(3)
     with c1:
-        if st.button("Back to questions"):
+        if st.button("Back to questions", key="rec_back_questions"):
             st.session_state.step = "planner"
             st.rerun()
     with c2:
-        if st.button("See Costs"):
+        if st.button("See Costs", key="rec_to_costs"):
             st.session_state.step = "calculator"
-            st.rerun()
-    with c3:
-        if st.button("Finish"):
-            st.session_state.step = "intro"
             st.rerun()
 
 elif st.session_state.step == "calculator":
@@ -319,15 +315,15 @@ elif st.session_state.step == "calculator":
     st.divider()
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("Back to recommendations"):
+        if st.button("Back to recommendations", key="costs_back_recs"):
             st.session_state.step = "recommendations"
             st.rerun()
     with c2:
-        if st.button("Add Household & Assets"):
+        if st.button("Add Household & Assets", key="costs_to_household"):
             st.session_state.step = "household"
             st.rerun()
     with c3:
-        if st.button("Schedule with an Advisor (Prototype)"):
+        if st.button("Schedule with an Advisor (Prototype)", key="costs_to_pfma"):
             st.session_state.step = "pfma_dev"
             st.rerun()
 
@@ -357,15 +353,15 @@ elif st.session_state.step == "household":
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("Back to Costs"):
+        if st.button("Back to Costs", key="household_back_costs"):
             st.session_state.step = "calculator"
             st.rerun()
     with c2:
-        if st.button("View Detailed Breakdown"):
+        if st.button("View Detailed Breakdown", key="household_to_breakdown"):
             st.session_state.step = "breakdown"
             st.rerun()
     with c3:
-        if st.button("Finish"):
+        if st.button("Finish", key="household_finish"):
             st.session_state.step = "intro"
             st.rerun()
 
@@ -476,21 +472,23 @@ elif st.session_state.step == "breakdown":
             {"Assets": "Total assets", "Amount": money(assets_total)},
         ])
 
-st.divider()
-b1, b2, b3, b4 = st.columns(4)
-with b1:
-    if st.button("Back to Household"):
-        st.session_state.step = "household"
-        st.rerun()
-with b2:
-    if st.button("Back to Costs"):
-        st.session_state.step = "calculator"
-        st.rerun()
-with b3:
-    if st.button("Back to Home"):
-        st.session_state.step = "intro"
-        st.rerun()
-with b4:
-    if st.button("Schedule with an Advisor (Prototype)"):
-        st.session_state.step = "pfma_dev"
-        st.rerun()
+# ---------------- Footer (hidden on PFMA) ----------------
+if st.session_state.step != "pfma_dev":
+    st.divider()
+    b1, b2, b3, b4 = st.columns(4)
+    with b1:
+        if st.button("Back to Household", key="footer_back_household"):
+            st.session_state.step = "household"
+            st.rerun()
+    with b2:
+        if st.button("Back to Costs", key="footer_back_costs"):
+            st.session_state.step = "calculator"
+            st.rerun()
+    with b3:
+        if st.button("Back to Home", key="footer_back_home"):
+            st.session_state.step = "intro"
+            st.rerun()
+    with b4:
+        if st.button("Schedule with an Advisor (Prototype)", key="footer_pfma"):
+            st.session_state.step = "pfma_dev"
+            st.rerun()
