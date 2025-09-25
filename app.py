@@ -128,11 +128,11 @@ def sidebar_pfma_link():
     try:
         st.sidebar.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
     except Exception:
+        # IMPORTANT: link_button has no 'key' arg. Keep it simple.
         st.sidebar.link_button(
             "Schedule with an Advisor",
             "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor",
             use_container_width=True,
-            key="pfma_sidebar_link",
         )
 
 
