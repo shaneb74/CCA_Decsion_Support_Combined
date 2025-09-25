@@ -563,4 +563,6 @@ with b2:
 
 with b3:
     if st.button("Back to Home"):
-        st.switch_page("app.py")  # multipage-safe way in Streamlit
+        # You ARE home. Reset flow instead of switching pages.
+        st.session_state.step = "intro"
+        st.rerun()
