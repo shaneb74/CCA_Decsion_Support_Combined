@@ -1,6 +1,4 @@
-# app.py — Senior Navigator (planner → recommendations → costs → household)
-# All JSON files (QA + recommendation) are expected in the repo root.
-
+# app.py — Senior Navigator (safer nav)
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,21 +8,17 @@ import traceback
 import json
 import streamlit as st
 
-# External cost UI helpers (single location control + per-person cost controls)
 from cost_controls import (
     render_location_control,
     render_costs_for_active_recommendations,
 )
 
-# ----------------------- Page config -----------------------
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
 
-# ----------------------- Paths (root) ----------------------
 ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
-# ----------------------- Imports ---------------------------
 try:
     from engines import PlannerEngine, CalculatorEngine, PlannerResult
 except Exception:
@@ -32,28 +26,22 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-# isolate drawers (no UX changes but kept outside app.py)
 try:
     import asset_engine
 except Exception:
-    asset_engine = None  # we'll gracefully handle missing/older modules
+    asset_engine = None
 
-
-# ----------------------- Utilities -------------------------
 def make_inputs(**kwargs):
-    """Create a light object for calculator inputs."""
     obj = SimpleNamespace()
     for k, v in kwargs.items():
         setattr(obj, k, v)
     return obj
-
 
 def reset_all():
     for k in list(st.session_state.keys()):
         if not k.startswith("_"):
             del st.session_state[k]
     st.session_state.step = "intro"
-
 
 def _is_intlike(x) -> bool:
     try:
@@ -62,10 +50,7 @@ def _is_intlike(x) -> bool:
     except Exception:
         return False
 
-
 def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
-    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'.
-    Logs an error if amap is invalid."""
     if not isinstance(amap, dict) or not amap:
         st.error(f"Invalid or empty answer map: {amap}")
         return [], []
@@ -79,16 +64,13 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
     if all(_is_intlike(k) for k in keys):
         ordered_keys = [str(k) for k in sorted(int(str(k)) for k in keys)]
     else:
-        ordered_keys = [str(k) for k in keys]  # preserve JSON insertion order
+        ordered_keys = [str(k) for k in keys]
     labels = [amap[k] for k in ordered_keys]
     if not labels:
         st.warning(f"No valid labels generated from {amap}")
     return ordered_keys, labels
 
-
 def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None) -> str | None:
-    """Render a radio from a JSON answer map and return the SELECTED KEY (string).
-    Handles invalid amap gracefully."""
     if not isinstance(amap, dict) or not amap:
         st.warning(f"Skipping radio for '{label}' due to invalid answer map: {amap}")
         return default_key
@@ -101,24 +83,20 @@ def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None)
     else:
         idx = 0
     try:
-        sel_label = st.radio(label, labels, index=idx, key=key)  # Removed help_text
+        sel_label = st.radio(label, labels, index=idx, key=key)
         return keys[labels.index(sel_label)]
     except Exception as e:
         st.error(f"Failed to render radio for '{label}': {e}. Using default: {default_key}")
         return default_key
 
-
 def clamp(n, lo, hi):
     return max(lo, min(hi, n))
 
-
-# ----------------------- Load JSONs ------------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
 if missing:
     st.error("Missing required JSON files:\n" + "\n".join(f"• {m.name}" for m in missing))
     st.stop()
 
-# ----------------------- Engines ---------------------------
 try:
     planner = PlannerEngine(str(QA_PATH), str(REC_PATH))
 except Exception:
@@ -133,8 +111,6 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-
-# ----------------------- Session init ----------------------
 if "step" not in st.session_state:
     st.session_state.step = "intro"
 
@@ -142,26 +118,17 @@ st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all)
 
-# Page-aware navigation helpers
-def to_pfma_sidebar():
-    if hasattr(st, "page_link"):
-        st.sidebar.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
-    else:
-        if st.sidebar.button("Schedule with an Advisor"):
+def sidebar_pfma():
+    try:
+        if st.sidebar.button("Schedule with an Advisor", use_container_width=True):
             st.switch_page("pages/Plan_for_My_Advisor.py")
+    except Exception:
+        st.sidebar.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor", use_container_width=True)
 
-def to_pfma_inline(label="Schedule with an Advisor"):
-    if hasattr(st, "page_link"):
-        st.page_link("pages/Plan_for_My_Advisor.py", label=label)
-    else:
-        if st.button(label):
-            st.switch_page("pages/Plan_for_My_Advisor.py")
+sidebar_pfma()
 
-to_pfma_sidebar()
+# ---------------- Steps ----------------
 
-# ----------------------- Steps -----------------------------
-
-# INTRO
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
     st.markdown(
@@ -181,9 +148,12 @@ Choosing senior living or in-home support can feel overwhelming.
             st.session_state.step = "audience"
             st.rerun()
     with c2:
-        to_pfma_inline()
+        try:
+            if st.button("Schedule with an Advisor"):
+                st.switch_page("pages/Plan_for_My_Advisor.py")
+        except Exception:
+            st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
 
-# AUDIENCE
 elif st.session_state.step == "audience":
     st.header("Who is this plan for?")
     role = st.radio(
@@ -199,39 +169,25 @@ elif st.session_state.step == "audience":
             n1 = st.text_input("Parent 1 name", value="Mom", key="p1_name", placeholder="Name")
         with c2:
             n2 = st.text_input("Parent 2 name", value="Dad", key="p2_name", placeholder="Name")
-        people.append({
-            "id": "A",
-            "display_name": n1,
-            "relationship": "parent",
-        })
-        people.append({
-            "id": "B",
-            "display_name": n2,
-            "relationship": "parent",
-        })
+        people.append({"id": "A","display_name": n1,"relationship": "parent"})
+        people.append({"id": "B","display_name": n2,"relationship": "parent"})
     else:
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
-        rel = {"Myself": "self", "My spouse/partner": "spouse", "My parent": "parent", "Someone else": "other"}[role]
-        people.append({
-            "id": "A",
-            "display_name": n,
-            "relationship": rel,
-        })
+        rel = {"Myself": "self","My spouse/partner": "spouse","My parent": "parent","Someone else": "other"}[role]
+        people.append({"id": "A","display_name": n,"relationship": rel})
 
     if st.button("Continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
         st.session_state.planner_results = {}
         st.session_state.person_costs = {}
-        # Transition to interstitial for spouse/partner check if not "Both parents"
         if role != "Both parents":
             st.session_state.step = "spouse_interstitial"
         else:
             st.session_state.step = "planner"
         st.rerun()
 
-# SPOUSE INTERSTITIAL
 elif st.session_state.step == "spouse_interstitial":
     st.header("Add Spouse or Partner?")
     st.markdown("Would you like to include a spouse or partner in this plan?")
@@ -247,15 +203,10 @@ elif st.session_state.step == "spouse_interstitial":
             st.rerun()
     with c2:
         if st.button("Add spouse/partner and continue", disabled=not st.session_state.get("care_partner_add", False)):
-            st.session_state.people.append({
-                "id": "B",
-                "display_name": st.session_state.get("care_partner_name") or "Spouse/Partner",
-                "relationship": "spouse",
-            })
+            st.session_state.people.append({"id": "B","display_name": st.session_state.get("care_partner_name") or "Spouse/Partner","relationship": "spouse"})
             st.session_state.step = "planner"
             st.rerun()
 
-# PLANNER (per person)
 elif st.session_state.step == "planner":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
@@ -289,7 +240,7 @@ elif st.session_state.step == "planner":
                 st.stop()
 
             st.session_state.planner_results = st.session_state.get("planner_results", {})
-            st.session_state.planner_results[pid] = result  # store object
+            st.session_state.planner_results[pid] = result
 
             st.session_state.current_person += 1
             if st.session_state.current_person >= len(people):
@@ -298,7 +249,6 @@ elif st.session_state.step == "planner":
                 st.session_state.step = "person_transition"
             st.rerun()
 
-# PERSON TRANSITION
 elif st.session_state.step == "person_transition":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
@@ -312,7 +262,6 @@ elif st.session_state.step == "person_transition":
         st.session_state.step = "planner"
         st.rerun()
 
-# RECOMMENDATIONS
 elif st.session_state.step == "recommendations":
     st.header("Our Recommendation")
     st.caption("Start with the recommended scenario, or switch without redoing questions.")
@@ -326,12 +275,7 @@ elif st.session_state.step == "recommendations":
         reasons = rec.reasons
         narrative = rec.narrative
 
-        nice = {
-            "none": "None",
-            "in_home": "In-home Care",
-            "assisted_living": "Assisted Living",
-            "memory_care": "Memory Care",
-        }
+        nice = {"none": "None","in_home": "In-home Care","assisted_living": "Assisted Living","memory_care": "Memory Care"}
         st.subheader(f"{name}: {nice.get(care_type, care_type).title()} (recommended)")
         if reasons:
             for r in reasons:
@@ -341,16 +285,10 @@ elif st.session_state.step == "recommendations":
 
         options = ["none", "in_home", "assisted_living", "memory_care"]
         idx = options.index(care_type) if care_type in options else 1
-        label = st.selectbox(
-            f"Care scenario for {name}",
-            [nice[o] for o in options],
-            index=idx,
-            key=f"override_{pid}",
-        )
+        label = st.selectbox(f"Care scenario for {name}", [nice[o] for o in options], index=idx, key=f"override_{pid}")
         reverse = {v: k for k, v in nice.items()}
         st.session_state.care_overrides = st.session_state.get("care_overrides", {})
         st.session_state.care_overrides[pid] = reverse[label]
-
         st.divider()
 
     c1, c2, c3 = st.columns(3)
@@ -367,18 +305,11 @@ elif st.session_state.step == "recommendations":
             st.session_state.step = "intro"
             st.rerun()
 
-# CALCULATOR
 elif st.session_state.step == "calculator":
     st.header("Cost Planner")
 
-    # SINGLE location selector (kept in one place)
     render_location_control()
-
-    # Per-person cost UI and roll-up (reads recommended/overridden scenarios)
-    combined_total = render_costs_for_active_recommendations(
-        planner=planner,
-        calculator=calculator,
-    )
+    combined_total = render_costs_for_active_recommendations(planner=planner, calculator=calculator)
 
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined_total:,.0f}")
@@ -394,9 +325,12 @@ elif st.session_state.step == "calculator":
             st.session_state.step = "household"
             st.rerun()
     with c3:
-        to_pfma_inline()
+        try:
+            if st.button("Schedule with an Advisor"):
+                st.switch_page("pages/Plan_for_My_Advisor.py")
+        except Exception:
+            st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
 
-# HOUSEHOLD (delegated to asset_engine for the drawers)
 elif st.session_state.step == "household":
     st.header("Household & Budget (optional)")
     st.caption("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
@@ -435,7 +369,6 @@ elif st.session_state.step == "household":
             st.session_state.step = "intro"
             st.rerun()
 
-# BREAKDOWN (detailed)
 elif st.session_state.step == "breakdown":
     st.header("Detailed Breakdown")
 
@@ -447,53 +380,35 @@ elif st.session_state.step == "breakdown":
 
     s = st.session_state
     people = s.get("people", [])
-    # person_costs: set by cost_controls.render_costs_for_active_recommendations()
     person_costs: dict = s.get("person_costs", {})
 
-    # ---------- Per-person costs (line items) ----------
     st.subheader("Care Costs by Person")
     care_rows = []
     care_total = 0
     for p in people:
         pid = p["id"]
         name = p["display_name"]
-        # scenario selection: set in recommendations (care_overrides) or default to engine result
         rec = s.get("planner_results", {}).get(pid, None)
         default_care = getattr(rec, "care_type", None) if rec else None
         scenario = s.get("care_overrides", {}).get(pid, default_care) or "none"
         cost = int(person_costs.get(pid, 0))
 
-        # Try to show knobs chosen in cost planner (if present in session_state)
         def pick(key_base: str):
             return s.get(f"{key_base}_{pid}") or s.get(key_base) or "—"
 
         if scenario == "assisted_living":
-            detail = ", ".join([
-                f"Care: {pick('al_care_level')}",
-                f"Room: {pick('al_room_type')}",
-                f"Mobility: {pick('al_mobility')}",
-                f"Conditions: {pick('al_conditions')}",
-            ])
+            detail = ", ".join([f"Care: {pick('al_care_level')}", f"Room: {pick('al_room_type')}", f"Mobility: {pick('al_mobility')}", f"Conditions: {pick('al_conditions')}"])
         elif scenario == "memory_care":
-            detail = ", ".join([
-                f"Care: {pick('mc_care_level')}",
-                f"Mobility: {pick('mc_mobility')}",
-                f"Conditions: {pick('mc_conditions')}",
-            ])
+            detail = ", ".join([f"Care: {pick('mc_care_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {pick('mc_conditions')}"])
         elif scenario == "in_home":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4))
             days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
             ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
-            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
+            detail = f"{'{'}hrs{'}'} hrs/day × {'{'}days{'}'} days/mo, Caregiver: {'{'}ctype{'}'}"
         else:
             detail = "—"
 
-        care_rows.append({
-            "Person": name,
-            "Scenario": scenario.replace("_", " ").title(),
-            "Details": detail,
-            "Monthly Cost": money(cost),
-        })
+        care_rows.append({"Person": name, "Scenario": scenario.replace("_", " ").title(), "Details": detail, "Monthly Cost": money(cost)})
         care_total += cost
 
     if care_rows:
@@ -501,7 +416,6 @@ elif st.session_state.step == "breakdown":
     else:
         st.info("No care costs yet. Choose a scenario in the Cost Planner.")
 
-    # ---------- Additional Monthly Costs ----------
     st.subheader("Additional Monthly Costs (Selected)")
     home_monthly = int(s.get("home_monthly_total", 0))
     mods_monthly = int(s.get("mods_monthly_total", 0))
@@ -514,7 +428,6 @@ elif st.session_state.step == "breakdown":
         {"Category": "Subtotal (additional)", "Monthly": money(addl_total)},
     ])
 
-    # ---------- Income (by source) ----------
     st.subheader("Monthly Income")
     inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
     inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0))
@@ -532,7 +445,6 @@ elif st.session_state.step == "breakdown":
         {"Source": "Total Income", "Monthly": money(income_total)},
     ])
 
-    # ---------- Totals & runway ----------
     st.subheader("Totals")
     monthly_need = care_total + addl_total
     gap = monthly_need - income_total
@@ -564,25 +476,23 @@ elif st.session_state.step == "breakdown":
             {"Assets": "Total assets", "Amount": money(assets_total)},
         ])
 
-# ---------- Bottom Navigation for main app ----------
 st.divider()
 b1, b2, b3, b4 = st.columns(4)
-
 with b1:
     if st.button("Back to Household"):
         st.session_state.step = "household"
         st.rerun()
-
 with b2:
     if st.button("Back to Costs"):
         st.session_state.step = "calculator"
         st.rerun()
-
 with b3:
     if st.button("Back to Home"):
-        # You're already in app.py; reset to intro instead of switching pages.
         st.session_state.step = "intro"
         st.rerun()
-
 with b4:
-    to_pfma_inline()
+    try:
+        if st.button("Schedule with an Advisor"):
+            st.switch_page("pages/Plan_for_My_Advisor.py")
+    except Exception:
+        st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")

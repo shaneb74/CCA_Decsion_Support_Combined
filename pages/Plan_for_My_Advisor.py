@@ -1,16 +1,11 @@
-# pages/Plan_for_My_Advisor.py — Booking + Optional Enrichment
-# Standalone page that plays nice with multipage Streamlit apps.
-# It asks only what’s needed to book, then offers optional context.
-
+# pages/Plan_for_My_Advisor.py — Booking + Optional Enrichment (safer nav)
 import streamlit as st
 
-# Do NOT set page_config here; main app owns it.
 st.title("Plan for My Advisor")
 st.caption("Schedule a time with an advisor. We'll only ask what we need right now.")
 
-# Pull any upstream context if present (safe defaults if missing)
-gc = st.session_state.get("gc_summary", {})        # e.g., {"care_path": "Assisted Living", "flags": [...], "zip": "12345"}
-calc = st.session_state.get("calculator_snapshot") # e.g., {"monthly_cost": 5500, "monthly_gap": 1400, "payer_hint": "Private Pay"}
+gc = st.session_state.get("gc_summary", {})
+calc = st.session_state.get("calculator_snapshot")
 
 with st.expander("Your current plan summary", expanded=True):
     if gc:
@@ -48,28 +43,16 @@ with st.expander("Your current plan summary", expanded=True):
 
 st.divider()
 
-# -------------------------- Booking (minimal) --------------------------
 with st.form("pfma_booking"):
     st.subheader("Booking details")
-
     name = st.text_input("Your name", value=st.session_state.get("user_name",""))
-    relationship = st.selectbox(
-        "Your relationship to the care recipient",
-        ["Self","Spouse/Partner","Adult Child","POA/Representative","Other"],
-        index=0
-    )
+    relationship = st.selectbox("Your relationship to the care recipient", ["Self","Spouse/Partner","Adult Child","POA/Representative","Other"], index=0)
     phone = st.text_input("Best phone number", value=st.session_state.get("user_phone",""), placeholder="+1 (___) ___-____")
     email = st.text_input("Email (optional)", value=st.session_state.get("user_email",""))
     zipcode = st.text_input("ZIP code for care search", value=(gc.get("zip","") if isinstance(gc, dict) else ""))
     urgency = st.select_slider("When do you need support?", options=["Exploring (3+ months)","Planning (1–3 months)","Soon (2–4 weeks)","ASAP (0–7 days)"], value="Planning (1–3 months)")
     constraints = st.text_area("Any must-haves or constraints? (optional)", placeholder="Pets allowed, near daughter in Seattle, budget cap, wheelchair accessible...")
-
-    payer_hint = None
-    if calc and calc.get("payer_hint"):
-        payer_hint = st.selectbox("Primary payer (you can adjust)", ["Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"], index=["Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"].index(calc["payer_hint"]))
-    else:
-        payer_hint = st.selectbox("Primary payer (optional)", ["Prefer not to say","Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"], index=0)
-
+    payer_hint = st.selectbox("Primary payer (optional)", ["Prefer not to say","Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"], index=0) if not (calc and calc.get("payer_hint")) else st.selectbox("Primary payer (you can adjust)", ["Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"], index=["Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"].index(calc["payer_hint"]))
     slot = st.text_input("Appointment time", placeholder="Select from scheduler widget")
     consent = st.checkbox("I agree to be contacted by an advisor", value=False)
 
@@ -80,34 +63,21 @@ with st.form("pfma_booking"):
         else:
             st.success("Appointment scheduled! You're on the calendar.")
             st.session_state["pfma_step"] = "optional"
-            st.session_state["pfma_booking"] = {
-                "name": name, "relationship": relationship, "phone": phone, "email": email,
-                "zipcode": zipcode, "urgency": urgency, "constraints": constraints,
-                "payer_hint": payer_hint, "slot": slot, "consent": consent
-            }
+            st.session_state["pfma_booking"] = {"name": name,"relationship": relationship,"phone": phone,"email": email,"zipcode": zipcode,"urgency": urgency,"constraints": constraints,"payer_hint": payer_hint,"slot": slot,"consent": consent}
 
-# -------------------------- Optional enrichment --------------------------
 if st.session_state.get("pfma_step") == "optional":
     st.success("Share a bit more so we can prepare. Totally optional.")
-
     with st.expander("Financial snapshot (optional)"):
         if calc:
             st.caption("We already have your Cost Planner details. Advisors will review them with you.")
-            st.json({
-                "payer_hint": calc.get("payer_hint"),
-                "income_keys": list((calc.get("income") or {}).keys()),
-                "has_assets": bool(calc.get("assets")),
-            })
+            st.json({"payer_hint": calc.get("payer_hint"),"income_keys": list((calc.get("income") or {}).keys()),"has_assets": bool(calc.get("assets"))})
         else:
             budget = st.select_slider("Do you know your realistic monthly care budget?", options=["<$3,000","$3,000–$5,000","$5,000–$8,000",">$8,000"], value="$3,000–$5,000")
             income_sources = st.text_area("Main sources of monthly income (SS, pensions, annuities)", placeholder="Social Security ~$2,100; Pension ~$600")
             benefits = st.multiselect("Benefits that may help with costs", ["VA Aid & Attendance","LTC Insurance","Medicaid"])
             assets = st.text_area("Any assets or savings that may help cover costs", placeholder="Savings ~$25k; Home equity ~—")
             st.caption("Prefer a full breakdown? Try the Cost Planner for detailed numbers and an affordability timeline.")
-            st.session_state["pfma_optional_finance"] = {
-                "budget_band": budget, "income_sources": income_sources,
-                "benefits": benefits, "assets": assets
-            }
+            st.session_state["pfma_optional_finance"] = {"budget_band": budget,"income_sources": income_sources,"benefits": benefits,"assets": assets}
 
     with st.expander("Health & care (optional)"):
         health = st.text_area("Tell us about any health conditions or diagnoses we should know about.", placeholder="e.g., Parkinson's, diabetes, memory changes...")
@@ -135,10 +105,8 @@ if st.session_state.get("pfma_step") == "optional":
         st.balloons()
 
 st.divider()
-
-# Page-aware Back to Home
-if hasattr(st, "page_link"):
-    st.page_link("app.py", label="Back to Home", icon="🏠")
-else:
+try:
     if st.button("Back to Home"):
         st.switch_page("app.py")
+except Exception:
+    st.link_button("Back to Home", "https://demo-combined-decision-support.streamlit.app/")
