@@ -548,13 +548,19 @@ elif st.session_state.step == "breakdown":
             {"Assets": "Total assets", "Amount": money(assets_total)},
         ])
 
-    st.divider()
-    b1, b2 = st.columns(2)
-    with b1:
-        if st.button("Back to Household"):
-            st.session_state.step = "household"
-            st.rerun()
-    with b2:
-        if st.button("Back to Costs"):
-            st.session_state.step = "calculator"
-            st.rerun()
+st.divider()
+b1, b2, b3 = st.columns(3)
+
+with b1:
+    if st.button("Back to Household"):
+        st.session_state.step = "household"
+        st.rerun()
+
+with b2:
+    if st.button("Back to Costs"):
+        st.session_state.step = "calculator"
+        st.rerun()
+
+with b3:
+    if st.button("Back to Home"):
+        st.switch_page("app.py")  # multipage-safe way in Streamlit
