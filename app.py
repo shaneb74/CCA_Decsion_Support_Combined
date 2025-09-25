@@ -128,7 +128,6 @@ def sidebar_pfma():
 sidebar_pfma()
 
 # ---------------- Steps ----------------
-
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
     st.markdown(
@@ -148,11 +147,9 @@ Choosing senior living or in-home support can feel overwhelming.
             st.session_state.step = "audience"
             st.rerun()
     with c2:
-        try:
-            if st.button("Schedule with an Advisor"):
-                st.switch_page("pages/Plan_for_My_Advisor.py")
-        except Exception:
-            st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
+        if st.button("Open Advisor Prototype"):
+            st.session_state.step = "pfma_dev"
+            st.rerun()
 
 elif st.session_state.step == "audience":
     st.header("Who is this plan for?")
