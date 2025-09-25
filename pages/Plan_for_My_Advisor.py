@@ -1,4 +1,4 @@
-# pages/Plan_for_My_Advisor.py — collision-safe, no own back button
+# pages/Plan_for_My_Advisor.py — collision-safe, fixed form/state key names
 import streamlit as st
 
 def render_pfma():
@@ -46,7 +46,8 @@ def render_pfma():
     st.divider()
 
     # ---------------- Booking (minimal) ----------------
-    with st.form("pfma_booking"):
+    # IMPORTANT: form key must NOT equal any st.session_state key we set
+    with st.form("pfma_booking_form"):
         st.subheader("Booking details")
 
         name = st.text_input("Your name", value=st.session_state.get("user_name",""), key="pfma_name")
@@ -83,7 +84,8 @@ def render_pfma():
             else:
                 st.success("Appointment scheduled! You're on the calendar.")
                 st.session_state["pfma_step"] = "optional"
-                st.session_state["pfma_booking"] = {
+                # Use a DIFFERENT key from the form id to avoid StreamlitAPIException
+                st.session_state["pfma_booking_data"] = {
                     "name": name, "relationship": relationship, "phone": phone, "email": email,
                     "zipcode": zipcode, "urgency": urgency, "constraints": constraints,
                     "payer_hint": payer_hint, "slot": slot, "consent": consent
@@ -144,3 +146,6 @@ def render_pfma():
         if st.button("Save optional details", key="pfma_save_optional"):
             st.success("Details saved. Your advisor will review them before your call.")
             st.balloons()
+
+if __name__ == "__main__":
+    render_pfma()
