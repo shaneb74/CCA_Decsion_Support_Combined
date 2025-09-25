@@ -141,8 +141,23 @@ if "step" not in st.session_state:
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all)
-# Add a persistent CTA to PFMA in the sidebar
-st.sidebar.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
+
+# Page-aware navigation helpers
+def to_pfma_sidebar():
+    if hasattr(st, "page_link"):
+        st.sidebar.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
+    else:
+        if st.sidebar.button("Schedule with an Advisor"):
+            st.switch_page("pages/Plan_for_My_Advisor.py")
+
+def to_pfma_inline(label="Schedule with an Advisor"):
+    if hasattr(st, "page_link"):
+        st.page_link("pages/Plan_for_My_Advisor.py", label=label)
+    else:
+        if st.button(label):
+            st.switch_page("pages/Plan_for_My_Advisor.py")
+
+to_pfma_sidebar()
 
 # ----------------------- Steps -----------------------------
 
@@ -166,8 +181,7 @@ Choosing senior living or in-home support can feel overwhelming.
             st.session_state.step = "audience"
             st.rerun()
     with c2:
-        # Clean, explicit jump to PFMA
-        st.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
+        to_pfma_inline()
 
 # AUDIENCE
 elif st.session_state.step == "audience":
@@ -380,7 +394,7 @@ elif st.session_state.step == "calculator":
             st.session_state.step = "household"
             st.rerun()
     with c3:
-        st.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
+        to_pfma_inline()
 
 # HOUSEHOLD (delegated to asset_engine for the drawers)
 elif st.session_state.step == "household":
@@ -571,4 +585,4 @@ with b3:
         st.rerun()
 
 with b4:
-    st.link_button("Schedule with an Advisor", "/Plan_for_My_Advisor")
+    to_pfma_inline()

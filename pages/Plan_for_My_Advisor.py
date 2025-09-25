@@ -1,5 +1,6 @@
 # pages/Plan_for_My_Advisor.py — Booking + Optional Enrichment
 # Standalone page that plays nice with multipage Streamlit apps.
+# It asks only what’s needed to book, then offers optional context.
 
 import streamlit as st
 
@@ -90,7 +91,6 @@ if st.session_state.get("pfma_step") == "optional":
     st.success("Share a bit more so we can prepare. Totally optional.")
 
     with st.expander("Financial snapshot (optional)"):
-
         if calc:
             st.caption("We already have your Cost Planner details. Advisors will review them with you.")
             st.json({
@@ -135,4 +135,10 @@ if st.session_state.get("pfma_step") == "optional":
         st.balloons()
 
 st.divider()
-st.link_button("Back to Home", "/")
+
+# Page-aware Back to Home
+if hasattr(st, "page_link"):
+    st.page_link("app.py", label="Back to Home", icon="🏠")
+else:
+    if st.button("Back to Home"):
+        st.switch_page("app.py")
