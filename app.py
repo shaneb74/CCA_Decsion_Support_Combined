@@ -1,4 +1,4 @@
-# app.py — Senior Navigator (safer nav)
+# app.py — Senior Navigator (inline PFMA prototype, no fragile page switching)
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -118,15 +118,6 @@ st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all)
 
-def sidebar_pfma():
-    try:
-        if st.sidebar.button("Schedule with an Advisor", use_container_width=True):
-            st.switch_page("pages/Plan_for_My_Advisor.py")
-    except Exception:
-        st.sidebar.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor", use_container_width=True)
-
-sidebar_pfma()
-
 # ---------------- Steps ----------------
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
@@ -149,6 +140,20 @@ Choosing senior living or in-home support can feel overwhelming.
     with c2:
         if st.button("Open Advisor Prototype"):
             st.session_state.step = "pfma_dev"
+            st.rerun()
+
+elif st.session_state.step == "pfma_dev":
+    # Render the PFMA prototype inline without page switching
+    try:
+        from pages.Plan_for_My_Advisor import render_pfma
+    except Exception as e:
+        st.error("Could not import pages/Plan_for_My_Advisor.py. Make sure the file exists and defines render_pfma().")
+        st.code(str(e))
+    else:
+        render_pfma()
+        st.divider()
+        if st.button("Back to Home"):
+            st.session_state.step = "intro"
             st.rerun()
 
 elif st.session_state.step == "audience":
@@ -322,11 +327,9 @@ elif st.session_state.step == "calculator":
             st.session_state.step = "household"
             st.rerun()
     with c3:
-        try:
-            if st.button("Schedule with an Advisor"):
-                st.switch_page("pages/Plan_for_My_Advisor.py")
-        except Exception:
-            st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
+        if st.button("Schedule with an Advisor (Prototype)"):
+            st.session_state.step = "pfma_dev"
+            st.rerun()
 
 elif st.session_state.step == "household":
     st.header("Household & Budget (optional)")
@@ -401,7 +404,7 @@ elif st.session_state.step == "breakdown":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4))
             days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
             ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
-            detail = f"{'{'}hrs{'}'} hrs/day × {'{'}days{'}'} days/mo, Caregiver: {'{'}ctype{'}'}"
+            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
         else:
             detail = "—"
 
@@ -488,8 +491,6 @@ with b3:
         st.session_state.step = "intro"
         st.rerun()
 with b4:
-    try:
-        if st.button("Schedule with an Advisor"):
-            st.switch_page("pages/Plan_for_My_Advisor.py")
-    except Exception:
-        st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
+    if st.button("Schedule with an Advisor (Prototype)"):
+        st.session_state.step = "pfma_dev"
+        st.rerun()
