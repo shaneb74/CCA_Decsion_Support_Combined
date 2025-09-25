@@ -1,4 +1,4 @@
-# pages/Plan_for_My_Advisor.py — PFMA prototype (prefill + structured Optional; best-time-to-call)
+# pages/Plan_for_My_Advisor.py — PFMA prototype (prefill + structured Optional; best-time-to-call; age-range; visited communities; supervision prefill; why-now)
 from __future__ import annotations
 import streamlit as st
 from datetime import date
@@ -32,6 +32,20 @@ def _prefill(field: str, fallback: str) -> str:
         return _first_truthy(gc.get("zip"), fallback, fallback=fallback)
     return fallback
 
+def _derive_supervision_from_gcp(gc: dict) -> bool:
+    """Best-effort prefill from GCP flags."""
+    if not isinstance(gc, dict):
+        return False
+    flags = set((gc.get("flags") or []))
+    text_flags = {str(f).lower() for f in flags}
+    heuristics = [
+        "wandering", "exit_seek", "exit seeking", "aggression", "sundown",
+        "hallucination", "delusion", "fall_risk", "two_person_assist",
+        "hoyer", "elopement", "behavioral"
+    ]
+    joined = " ".join(text_flags)
+    return any(h in joined for h in heuristics)
+
 # ---------- main render ----------
 def render_pfma():
     st.title("Plan for My Advisor")
@@ -40,6 +54,9 @@ def render_pfma():
     # Context pulled from session if present (safe defaults)
     gc = st.session_state.get("gc_summary", {})
     calc = st.session_state.get("calculator_snapshot")
+
+    # seed supervision prefill from GCP
+    st.session_state.setdefault("pfma_special_supervision_prefill", _derive_supervision_from_gcp(gc))
 
     with st.expander("Your current plan summary", expanded=True):
         if gc:
@@ -88,6 +105,15 @@ def render_pfma():
             index=0,
             key="pfma_relationship",
         )
+
+        # New: Age range for quick context
+        age_range = st.selectbox(
+            "Age range of the care recipient",
+            ["Prefer not to say", "60–69", "70–74", "75–79", "80–84", "85–89", "90+"],
+            index=2,
+            key="pfma_age_range",
+        )
+
         phone = st.text_input(
             "Best phone number",
             value=st.session_state["pfma_phone"],
@@ -135,6 +161,7 @@ def render_pfma():
                 st.session_state["pfma_booking_data"] = {
                     "name": name,
                     "relationship": relationship,
+                    "age_range": age_range,
                     "phone": phone,
                     "email": email,
                     "zipcode": zipcode,
@@ -203,10 +230,25 @@ def render_pfma():
 
         # Health & care
         with st.expander("Health & care (optional)", expanded=False):
+            # context first
+            why_now = st.text_input(
+                "Why are you seeking care now? (optional)",
+                placeholder="What’s changed lately or prompted this?",
+                key="pfma_why_now",
+            )
+
             dx = st.multiselect("Primary diagnoses (select all that apply)", DIAG_PRIMARY, key="pfma_dx")
             dx_other = st.text_input("Other diagnosis (optional)", key="pfma_dx_other")
 
             behaviors = st.multiselect("Behaviors / risks", BEHAVIORS, key="pfma_behaviors")
+
+            # supervision, prefilled from GCP flags
+            special_sup = st.checkbox(
+                "Specialized supervision needed",
+                value=st.session_state.get("pfma_special_supervision_prefill", False),
+                key="pfma_special_supervision",
+                help="Examples: exit seeking/wandering, frequent falls, severe behaviors, needs 2-person assist or Hoyer."
+            )
 
             col_o2a, col_o2b = st.columns([1, 1])
             with col_o2a:
@@ -318,6 +360,15 @@ def render_pfma():
             prejudice = st.selectbox("Known prejudices that could affect placement", ["No", "Yes"], key="pfma_prejudice")
             prejudice_note = st.text_input(
                 "If yes, brief note", key="pfma_prejudice_note", disabled=(prejudice == "No")
+            )
+
+            # New: visited communities
+            visited = st.selectbox("Visited any communities?", ["No", "Yes"], key="pfma_visited_comms")
+            visited_which = st.text_input(
+                "If yes, which communities? (optional)",
+                key="pfma_visited_comms_which",
+                disabled=(visited == "No"),
+                placeholder="Names or neighborhoods are fine",
             )
 
         # Contacts & legal
