@@ -1,5 +1,28 @@
-# pages/Plan_for_My_Advisor.py — collision-safe, fixed form/state key names
+# pages/Plan_for_My_Advisor.py — prefilled prototype, date/time picker, safe keys
 import streamlit as st
+from datetime import date, time, timedelta
+
+FAKE_DEFAULTS = {
+    "name": "Pat Sample",
+    "phone": "555-123-9876",
+    "email": "pat.sample@example.com",
+    "zip": "94107",
+    "appt_days_out": 2,
+    "appt_time": time(10, 30),
+}
+
+def _prefill(field, fallback):
+    # prefer any app-level session info, otherwise fallback to fake
+    if field == "name":
+        return st.session_state.get("user_name", fallback)
+    if field == "phone":
+        return st.session_state.get("user_phone", fallback)
+    if field == "email":
+        return st.session_state.get("user_email", fallback)
+    if field == "zip":
+        gc = st.session_state.get("gc_summary") or {}
+        return (gc.get("zip") or fallback)
+    return fallback
 
 def render_pfma():
     st.title("Plan for My Advisor")
@@ -45,50 +68,52 @@ def render_pfma():
 
     st.divider()
 
-    # ---------------- Booking (minimal) ----------------
-    # IMPORTANT: form key must NOT equal any st.session_state key we set
+    # ---------------- Booking (prefilled) ----------------
     with st.form("pfma_booking_form"):
         st.subheader("Booking details")
 
-        name = st.text_input("Your name", value=st.session_state.get("user_name",""), key="pfma_name")
+        name = st.text_input("Your name", value=_prefill("name", FAKE_DEFAULTS["name"]), key="pfma_name")
         relationship = st.selectbox(
             "Your relationship to the care recipient",
             ["Self","Spouse/Partner","Adult Child","POA/Representative","Other"],
             index=0, key="pfma_relationship"
         )
-        phone = st.text_input("Best phone number", value=st.session_state.get("user_phone",""), placeholder="+1 (___) ___-____", key="pfma_phone")
-        email = st.text_input("Email (optional)", value=st.session_state.get("user_email",""), key="pfma_email")
-        zipcode = st.text_input("ZIP code for care search", value=(gc.get("zip","") if isinstance(gc, dict) else ""), key="pfma_zip")
+        phone = st.text_input("Best phone number", value=_prefill("phone", FAKE_DEFAULTS["phone"]), placeholder="+1 (___) ___-____", key="pfma_phone")
+        email = st.text_input("Email (optional)", value=_prefill("email", FAKE_DEFAULTS["email"]), key="pfma_email")
+        zipcode = st.text_input("ZIP code for care search", value=_prefill("zip", FAKE_DEFAULTS["zip"]), key="pfma_zip")
         urgency = st.select_slider("When do you need support?",
             options=["Exploring (3+ months)","Planning (1–3 months)","Soon (2–4 weeks)","ASAP (0–7 days)"],
             value="Planning (1–3 months)", key="pfma_urgency")
         constraints = st.text_area("Any must-haves or constraints? (optional)",
             placeholder="Pets allowed, near daughter in Seattle, budget cap, wheelchair accessible...", key="pfma_constraints")
 
-        if calc and calc.get("payer_hint"):
-            payer_hint = st.selectbox("Primary payer (you can adjust)",
-                ["Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"],
-                index=["Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"].index(calc["payer_hint"]), key="pfma_payer_hint_known")
+        # Primary payer prefill if calculator provided a hint; else leave default
+        payer_options = ["Prefer not to say","Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"]
+        if calc and calc.get("payer_hint") in payer_options:
+            payer_idx = payer_options.index(calc["payer_hint"])
         else:
-            payer_hint = st.selectbox("Primary payer (optional)",
-                ["Prefer not to say","Private Pay","LTC Insurance","VA Aid & Attendance","Medicaid"],
-                index=0, key="pfma_payer_hint_optional")
+            payer_idx = 0
+        payer_hint = st.selectbox("Primary payer (optional)", payer_options, index=payer_idx, key="pfma_payer_hint")
 
-        slot = st.text_input("Appointment time", placeholder="Select from scheduler widget", key="pfma_slot")
-        consent = st.checkbox("I agree to be contacted by an advisor", value=False, key="pfma_consent")
+        # Appointment picker using date + time widgets, prefilled to +2 days at 10:30
+        from datetime import date, timedelta, time as _time
+        appt_date = st.date_input("Appointment date", value=date.today() + timedelta(days=FAKE_DEFAULTS["appt_days_out"]), key="pfma_appt_date")
+        appt_time = st.time_input("Appointment time", value=FAKE_DEFAULTS["appt_time"], key="pfma_appt_time")
+
+        consent = st.checkbox("I agree to be contacted by an advisor", value=True, key="pfma_consent")
 
         submitted = st.form_submit_button("Schedule appointment", type="primary", use_container_width=True)
         if submitted:
-            if not name or not phone or not zipcode or not slot or not consent:
-                st.error("Please complete the required fields (name, phone, ZIP, appointment time, consent).")
+            if not name or not phone or not zipcode:
+                st.error("Please complete the required fields (name, phone, ZIP).")
             else:
-                st.success("Appointment scheduled! You're on the calendar.")
+                slot_str = f"{appt_date.isoformat()} {appt_time.strftime('%H:%M')}"
+                st.success(f"Appointment scheduled for {slot_str}. You're on the calendar.")
                 st.session_state["pfma_step"] = "optional"
-                # Use a DIFFERENT key from the form id to avoid StreamlitAPIException
                 st.session_state["pfma_booking_data"] = {
                     "name": name, "relationship": relationship, "phone": phone, "email": email,
                     "zipcode": zipcode, "urgency": urgency, "constraints": constraints,
-                    "payer_hint": payer_hint, "slot": slot, "consent": consent
+                    "payer_hint": payer_hint, "slot": slot_str, "consent": consent
                 }
 
     # ---------------- Optional enrichment ----------------
