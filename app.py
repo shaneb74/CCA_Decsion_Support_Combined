@@ -222,7 +222,7 @@ def render_pfma():
             s.pfma_booked = True
             st.success("✅ Appointment request submitted. An advisor will reach out at your preferred time.")
             st.info("Add any optional details below to help your advisor prepare. Totally optional.")
-            st.balloons()
+         
     with colC:
         if st.button("Finish", key="pfma_finish"):
             s.step = "intro"
