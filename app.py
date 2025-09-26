@@ -1,7 +1,6 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown)
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 import traceback
@@ -35,23 +34,18 @@ try:
 except Exception:
     asset_engine = None  # gracefully handle missing/older modules
 
-
 # ----------------------- Utilities -------------------------
 def make_inputs(**kwargs):
-    """Create a light object for calculator inputs."""
     obj = SimpleNamespace()
     for k, v in kwargs.items():
         setattr(obj, k, v)
     return obj
 
-
 def reset_all():
-    # clear everything except special keys
     for k in list(st.session_state.keys()):
         if not k.startswith("_"):
             del st.session_state[k]
     st.session_state.step = "intro"
-
 
 def _is_intlike(x) -> bool:
     try:
@@ -60,9 +54,7 @@ def _is_intlike(x) -> bool:
     except Exception:
         return False
 
-
 def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
-    """Return (ordered_keys, ordered_labels) even if the JSON answer keys are not '1'..'N'."""
     if not isinstance(amap, dict) or not amap:
         st.error(f"Invalid or empty answer map: {amap}")
         return [], []
@@ -76,15 +68,13 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
     if all(_is_intlike(k) for k in keys):
         ordered_keys = [str(k) for k in sorted(int(str(k)) for k in keys)]
     else:
-        ordered_keys = [str(k) for k in keys]  # preserve JSON insertion order
+        ordered_keys = [str(k) for k in keys]
     labels = [amap[k] for k in ordered_keys]
     if not labels:
         st.warning(f"No valid labels generated from {amap}")
     return ordered_keys, labels
 
-
 def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None) -> str | None:
-    """Render a radio from a JSON answer map and return the SELECTED KEY (string)."""
     if not isinstance(amap, dict) or not amap:
         st.warning(f"Skipping radio for '{label}' due to invalid answer map: {amap}")
         return default_key
@@ -103,10 +93,8 @@ def radio_from_answer_map(label, amap, *, key, help_text=None, default_key=None)
         st.error(f"Failed to render radio for '{label}': {e}. Using default: {default_key}")
         return default_key
 
-
 def clamp(n, lo, hi):
     return max(lo, min(hi, n))
-
 
 def money(n: int | float) -> str:
     try:
@@ -114,23 +102,21 @@ def money(n: int | float) -> str:
     except Exception:
         return "$0"
 
+def goto_pfma():
+    """Always navigate to the PFMA page in the same tab if possible."""
+    try:
+        st.switch_page("pages/Plan_for_My_Advisor.py")
+    except Exception:
+        # Last-resort fallback: absolute link (may open a new tab on some hosts)
+        st.link_button("Open Advisor Prototype", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
 
-def sidebar_pfma_link():
-    """Robust link in the sidebar to the PFMA page."""
+def sidebar_links():
     st.sidebar.title("Senior Navigator")
     st.sidebar.caption("Planner → Recommendations → Costs → Household")
     st.sidebar.button("Start over", on_click=reset_all, key="start_over_btn")
-
-    # Prefer page_link if available; fall back to external link (link_button has NO 'key' arg)
-    try:
-        st.sidebar.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
-    except Exception:
-        st.sidebar.link_button(
-            "Schedule with an Advisor",
-            "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor",
-            use_container_width=True,
-        )
-
+    # Use a normal button + switch_page to guarantee same-tab nav
+    if st.sidebar.button("Schedule with an Advisor", key="pfma_sidebar_btn", use_container_width=True):
+        goto_pfma()
 
 # ----------------------- Load JSONs ------------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
@@ -153,18 +139,14 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-
 # ----------------------- Session init ----------------------
 if "step" not in st.session_state:
     st.session_state.step = "intro"
 
-# Sidebar links
-sidebar_pfma_link()
-
+# Sidebar
+sidebar_links()
 
 # ----------------------- Steps -----------------------------
-
-# INTRO
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
     st.markdown(
@@ -184,13 +166,9 @@ Choosing senior living or in-home support can feel overwhelming.
             st.session_state.step = "audience"
             st.rerun()
     with c2:
-        # Static link to PFMA prototype from intro
-        try:
-            st.page_link("pages/Plan_for_My_Advisor.py", label="Open Advisor Prototype", icon="📞")
-        except Exception:
-            st.link_button("Open Advisor Prototype", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
+        if st.button("Open Advisor Prototype", key="intro_pfma_btn"):
+            goto_pfma()
 
-# AUDIENCE
 elif st.session_state.step == "audience":
     st.header("Who is this plan for?")
     role = st.radio(
@@ -225,7 +203,6 @@ elif st.session_state.step == "audience":
             st.session_state.step = "planner"
         st.rerun()
 
-# SPOUSE INTERSTITIAL
 elif st.session_state.step == "spouse_interstitial":
     st.header("Add Spouse or Partner?")
     st.markdown("Would you like to include a spouse or partner in this plan?")
@@ -249,7 +226,6 @@ elif st.session_state.step == "spouse_interstitial":
             st.session_state.step = "planner"
             st.rerun()
 
-# PLANNER (per person)
 elif st.session_state.step == "planner":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
@@ -283,7 +259,7 @@ elif st.session_state.step == "planner":
                 st.stop()
 
             st.session_state.planner_results = st.session_state.get("planner_results", {})
-            st.session_state.planner_results[pid] = result  # store object
+            st.session_state.planner_results[pid] = result
 
             st.session_state.current_person += 1
             if st.session_state.current_person >= len(people):
@@ -292,7 +268,6 @@ elif st.session_state.step == "planner":
                 st.session_state.step = "person_transition"
             st.rerun()
 
-# PERSON TRANSITION
 elif st.session_state.step == "person_transition":
     people = st.session_state.get("people", [])
     i = st.session_state.get("current_person", 0)
@@ -306,7 +281,6 @@ elif st.session_state.step == "person_transition":
         st.session_state.step = "planner"
         st.rerun()
 
-# RECOMMENDATIONS
 elif st.session_state.step == "recommendations":
     st.header("Our Recommendation")
     st.caption("Start with the recommended scenario, or switch without redoing questions.")
@@ -350,14 +324,11 @@ elif st.session_state.step == "recommendations":
             st.session_state.step = "intro"
             st.rerun()
 
-# CALCULATOR
 elif st.session_state.step == "calculator":
     st.header("Cost Planner")
 
-    # SINGLE location selector (kept in one place)
     render_location_control()
 
-    # Per-person cost UI and roll-up (reads recommended/overridden scenarios)
     combined_total = render_costs_for_active_recommendations(
         planner=planner,
         calculator=calculator,
@@ -377,12 +348,9 @@ elif st.session_state.step == "calculator":
             st.session_state.step = "household"
             st.rerun()
     with c3:
-        try:
-            st.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
-        except Exception:
-            st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
+        if st.button("Schedule with an Advisor", key="calc_pfma_btn"):
+            goto_pfma()
 
-# HOUSEHOLD (delegated to asset_engine for the drawers)
 elif st.session_state.step == "household":
     st.header("Household & Budget (optional)")
     st.caption("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
@@ -421,29 +389,24 @@ elif st.session_state.step == "household":
             st.session_state.step = "intro"
             st.rerun()
 
-# BREAKDOWN (detailed) — SAFE RENDERING
 elif st.session_state.step == "breakdown":
     st.header("Detailed Breakdown")
 
     s = st.session_state
     people = s.get("people", [])
-    # person_costs: set by cost_controls.render_costs_for_active_recommendations()
     person_costs: dict = s.get("person_costs", {})
 
-    # ---------- Per-person costs (line items) ----------
     st.subheader("Care Costs by Person")
     care_rows = []
     care_total = 0
     for p in people:
         pid = p["id"]
         name = p["display_name"]
-        # scenario selection: set in recommendations (care_overrides) or default to engine result
         rec = s.get("planner_results", {}).get(pid, None)
         default_care = getattr(rec, "care_type", None) if rec else None
         scenario = s.get("care_overrides", {}).get(pid, default_care) or "none"
         cost = int(person_costs.get(pid, 0))
 
-        # Try to show knobs chosen in cost planner (if present in session_state)
         def pick(key_base: str):
             return s.get(f"{key_base}_{pid}") or s.get(key_base) or "—"
 
@@ -481,7 +444,6 @@ elif st.session_state.step == "breakdown":
     else:
         st.info("No care costs yet. Choose a scenario in the Cost Planner.")
 
-    # ---------- Additional Monthly Costs ----------
     st.subheader("Additional Monthly Costs (Selected)")
     home_monthly = int(s.get("home_monthly_total", 0))
     mods_monthly = int(s.get("mods_monthly_total", 0))
@@ -494,7 +456,6 @@ elif st.session_state.step == "breakdown":
         {"Category": "Subtotal (additional)", "Monthly": money(addl_total)},
     ])
 
-    # ---------- Monthly Income ----------
     st.subheader("Monthly Income")
     inc_A = int(s.get("a_ss", 0)) + int(s.get("a_pn", 0)) + int(s.get("a_other", 0))
     inc_B = int(s.get("b_ss", 0)) + int(s.get("b_pn", 0)) + int(s.get("b_other", 0))
@@ -512,7 +473,6 @@ elif st.session_state.step == "breakdown":
         {"Source": "Total Income", "Monthly": money(income_total)},
     ])
 
-    # ---------- Totals & Runway (SAFE RENDERING) ----------
     st.subheader("Totals")
     monthly_need = care_total + addl_total
     gap = monthly_need - income_total
@@ -526,7 +486,6 @@ elif st.session_state.step == "breakdown":
     col2.metric("Total Monthly Income (incl. VA)", money(income_total))
     col3.metric("Estimated Monthly Gap", money(gap))
 
-    # runway (years + months for readability)
     if gap > 0 and assets_total > 0:
         months = int(assets_total // max(gap, 1))
         years = months // 12
@@ -554,7 +513,5 @@ elif st.session_state.step == "breakdown":
             st.session_state.step = "household"
             st.rerun()
     with cta2:
-        try:
-            st.page_link("pages/Plan_for_My_Advisor.py", label="Schedule with an Advisor", icon="📞")
-        except Exception:
-            st.link_button("Schedule with an Advisor", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
+        if st.button("Schedule with an Advisor", key="bd_pfma_btn"):
+            goto_pfma()
