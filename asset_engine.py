@@ -24,29 +24,22 @@ def _money(label, key, default=0, *, step=50, min_value=0, help_text=None) -> in
 
 @dataclass
 class HouseholdResult:
-    # Income
     indiv_income_A: int
     indiv_income_B: int
     household_income: int
-    # Benefits
     va_A: int
     va_B: int
     ltc_add_A: int
     ltc_add_B: int
     benefits_total: int
-    # Home costs and proceeds
     home_monthly_total: int
     home_sale_net_proceeds: int
-    # Mods
     mods_monthly_total: int
     mods_upfront_total: int
     mods_deduct_assets: bool
-    # Other monthly
     other_monthly_total: int
-    # Assets
     assets_common_total: int
     assets_detailed_total: int
-    # Final assets rollup (applies proceeds and deducts mods upfront if selected)
     assets_total_effective: int
 
     def as_dict(self) -> Dict[str, Any]:
@@ -95,6 +88,7 @@ class IncomeAssetsEngine:
             nA = names[0] if names else "Person A"
             nB = names[1] if len(names) > 1 else None
 
+            # Defaults if calculator didn't inject settings
             settings = getattr(self.calculator, "settings", {}) if self.calculator else {}
             settings = settings or {}
             if "va_mapr_2025" not in settings:
@@ -179,6 +173,16 @@ class IncomeAssetsEngine:
             a_ltc_add = ltc_add_val if a_ltc == "Yes" else 0
             b_ltc_add = ltc_add_val if (nB and b_ltc == "Yes") else 0
             benefits_total = a_va + b_va + a_ltc_add + b_ltc_add
+
+            # ---------- Canonical flags used elsewhere (PFMA reads these) ----------
+            st.session_state["benefits_va"] = bool(a_va or b_va)
+            st.session_state["benefits_ltc_A"] = (a_ltc == "Yes")
+            st.session_state["benefits_ltc_B"] = (b_ltc == "Yes") if nB else False
+            st.session_state["benefits_ltc"] = bool(
+                st.session_state["benefits_ltc_A"] or st.session_state["benefits_ltc_B"]
+            )
+            st.session_state["benefits_ltc_monthly_total"] = int(a_ltc_add + b_ltc_add)
+
             st.metric("Subtotal — Benefits (VA + LTC add-ons)", _fmt(benefits_total))
 
         return a_va, b_va, a_ltc_add, b_ltc_add, benefits_total
@@ -237,7 +241,6 @@ class IncomeAssetsEngine:
                 home_monthly = tax + ins + hoa + util
                 st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
 
-        # Persist for Breakdown consumers
         st.session_state["home_monthly_total"] = int(home_monthly)
         st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
         return int(home_monthly), int(sale_proceeds)
@@ -245,20 +248,18 @@ class IncomeAssetsEngine:
     def _section_mods(self):
         with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=False):
             pay_method = st.radio("Payment method", ["Amortize monthly", "Pay upfront (one-time)"],
-                                  index=0, key="mods_pay_method",
-                                  help="Choose whether to spread the cost over months or pay upfront.")
-            finish = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1,
-                                  help="Budget ≈ 0.8×, Standard = 1.0×, Custom ≈ 1.35×")
+                                  index=0, key="mods_pay_method")
+            finish = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1)
             mult = {"Budget": 0.8, "Standard": 1.0, "Custom": 1.35}[finish]
 
             items = [
-                ("mods_grab",        "Grab bars & railings (avg $800)",                800),
-                ("mods_door",        "Widen doorways (avg $2,500)",                    2500),
-                ("mods_shower",      "Bathroom walk-in shower conversion (avg $12,000)", 12000),
-                ("mods_ramp",        "Ramp installation (avg $3,500)",                 3500),
-                ("mods_stair",       "Stair lift (avg $4,500)",                        4500),
-                ("mods_sensors",     "Smart home monitoring/sensors (avg $1,200)",     1200),
-                ("mods_lighting",    "Lighting & fall-risk improvements (avg $1,500)", 1500),
+                ("mods_grab",   "Grab bars & railings (avg $800)", 800),
+                ("mods_door",   "Widen doorways (avg $2,500)",     2500),
+                ("mods_shower", "Walk-in shower conversion (avg $12,000)", 12000),
+                ("mods_ramp",   "Ramp installation (avg $3,500)",   3500),
+                ("mods_stair",  "Stair lift (avg $4,500)",          4500),
+                ("mods_sensors","Monitoring/sensors (avg $1,200)", 1200),
+                ("mods_light",  "Lighting improvements (avg $1,500)", 1500),
             ]
 
             total_cost = 0
@@ -281,7 +282,7 @@ class IncomeAssetsEngine:
             else:
                 st.session_state["mods_monthly_total"] = 0
                 st.session_state["mods_upfront_total"] = total_cost
-                deduct = st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
+                st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
                 st.metric("Upfront cost — Home mods", _fmt(total_cost))
 
         return int(st.session_state.get("mods_monthly_total", 0)), int(st.session_state.get("mods_upfront_total", 0)), bool(st.session_state.get("mods_deduct_assets", False))
@@ -342,14 +343,12 @@ class IncomeAssetsEngine:
         assets_common = self._section_assets_common()
         assets_detail = self._section_assets_detailed()
 
-        # Effective assets rollup (apply proceeds, deduct upfront mods optionally)
         effective_assets = assets_common + assets_detail + int(st.session_state.get("home_sale_net_proceeds", 0))
         if mods_deduct:
             effective_assets -= mods_upfront
         if effective_assets < 0:
             effective_assets = 0
 
-        # Return consolidated result
         return HouseholdResult(
             indiv_income_A=a_indiv,
             indiv_income_B=b_indiv,
