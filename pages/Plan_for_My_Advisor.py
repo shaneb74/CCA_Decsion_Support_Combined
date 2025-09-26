@@ -96,7 +96,7 @@ def render_pfma():
     st.session_state.setdefault("pfma_best_time", FAKE_DEFAULTS["best_time"])
 
     with st.form("pfma_booking_form"):
-        st.subheader("Booking details")
+        st.subheader("Get Connected to Expert Advice - Always at NO COST to you.")
 
         name = st.text_input("Your name", value=st.session_state["pfma_name"], key="pfma_name")
         relationship = st.selectbox(
