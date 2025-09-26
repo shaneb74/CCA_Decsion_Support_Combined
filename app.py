@@ -1,24 +1,28 @@
 
-# app.py — Senior Navigator (single-file: Planner → Recommendations → Costs → Household → Breakdown → PFMA)
+# app.py — Senior Navigator (single-file: Planner → Recommendations → Cost Planner → Household → Breakdown → PFMA)
 from __future__ import annotations
 
 from pathlib import Path
 import traceback
+from types import SimpleNamespace
+from typing import List
 import streamlit as st
 
-# Helpers from your repo
+# External cost UI helpers
 from cost_controls import (
     render_location_control,
     render_costs_for_active_recommendations,
+    CONDITION_OPTIONS,
 )
 
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
 
+# ----------------------- Paths (root) ----------------------
 ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
-# Engines
+# ----------------------- Engines ---------------------------
 try:
     from engines import PlannerEngine, CalculatorEngine, PlannerResult
 except Exception:
@@ -26,13 +30,13 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-# Household drawers optional
+# isolate drawers (optional)
 try:
     import asset_engine
 except Exception:
     asset_engine = None
 
-# ---------------- Utilities ----------------
+# ----------------------- Utilities -------------------------
 def reset_all():
     for k in list(st.session_state.keys()):
         if not k.startswith("_"):
@@ -73,57 +77,20 @@ def money(n: int | float) -> str:
     try: return f"${int(round(float(n))):,}"
     except Exception: return "$0"
 
-# ------------- PFMA (inline page) -------------
-def _prefill_pfma_flags_and_conditions():
-    """Set defaults for PFMA prefill: VA, LTC, and chronic conditions.
-    - VA: true if any *_va_monthly > 0
-    - LTC: true if any of the household UI keys indicate 'Yes' or if payer is LTC
-    - Conditions: taken from cost planner canonical list if present
-    """
-    s = st.session_state
+def _sanitize_conditions(default_list):
+    opts = set(CONDITION_OPTIONS)
+    out, seen = [], set()
+    for v in (default_list or []):
+        if isinstance(v, str) and v in opts and v not in seen:
+            out.append(v); seen.add(v)
+    return out
 
-    # VA
-    va_detected = any(int(s.get(k, 0) or 0) > 0 for k in ("a_va_monthly", "b_va_monthly", "va_monthly"))
-    if "pfma_va" not in s:
-        s.pfma_va = bool(va_detected)
-
-    # LTC heuristic: explicit selects or add-ons or any 'ltc' key with a truthy/yes value
-    ltc_detected = False
-    if str(s.get("a_ltc", "")).lower() == "yes" or str(s.get("b_ltc", "")).lower() == "yes":
-        ltc_detected = True
-    if int(s.get("ltc_add_A", 0) or 0) > 0 or int(s.get("ltc_add_B", 0) or 0) > 0:
-        ltc_detected = True
-    if not ltc_detected:
-        for k, v in s.items():
-            if "ltc" in str(k).lower():
-                if isinstance(v, str) and v.strip().lower() in ("yes", "true", "1"):
-                    ltc_detected = True; break
-                if isinstance(v, (int, float)) and v:
-                    ltc_detected = True; break
-                if isinstance(v, bool) and v:
-                    ltc_detected = True; break
-    if not ltc_detected and s.get("pfma_payer") == "Long-term care insurance":
-        ltc_detected = True
-    if "pfma_ltc" not in s:
-        s.pfma_ltc = bool(ltc_detected)
-
-    # Chronic conditions from Cost Planner canonical list
-    canonical = s.get("conditions_canonical")
-    if isinstance(canonical, list) and canonical and not s.get("pfma_conditions"):
-        # Deduplicate while preserving order
-        seen = set(); merged = []
-        for c in canonical:
-            if c and c not in seen:
-                seen.add(c); merged.append(c)
-        s.pfma_conditions = merged
-
+# ----------------------- PFMA (inline page) ----------------
 def render_pfma():
-    s = st.session_state
-    _prefill_pfma_flags_and_conditions()
-
     st.header("Plan for My Advisor")
     st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
 
+    s = st.session_state
     people = s.get("people", [])
     recs = s.get("planner_results", {})
     overrides = s.get("care_overrides", {})
@@ -135,8 +102,7 @@ def render_pfma():
             for p in people:
                 pid, name = p["id"], p["display_name"]
                 rec = recs.get(pid)
-                care_type = getattr(rec, "care_type", None) if rec else None
-                scenario = overrides.get(pid, care_type) or "in_home"
+                scenario = overrides.get(pid, getattr(rec, "care_type", "in_home")) or "in_home"
                 st.write(f"**{name}:** {nice.get(scenario, scenario).title()}")
         else:
             st.info("No Guided Care Plan found. You can still book now.")
@@ -146,10 +112,47 @@ def render_pfma():
         else:
             st.info("No Cost Planner data yet.")
 
+    # Prefill VA / LTC booleans from session
+    va_detected = any([s.get("a_va_monthly", 0), s.get("b_va_monthly", 0), s.get("va_monthly", 0)])
+    ltc_detected = False
+    for k in ("a_ltc", "b_ltc"):
+        if s.get(k) == "Yes":
+            ltc_detected = True
+    for k in ("ltc_add_A","ltc_add_B"):
+        if int(s.get(k, 0)) > 0:
+            ltc_detected = True
+    if not ltc_detected:
+        for k, v in s.items():
+            if "ltc" in str(k).lower() and str(v).lower() in ("true","yes","1"):
+                ltc_detected = True; break
+    if not ltc_detected and s.get("pfma_payer") == "Long-term care insurance":
+        ltc_detected = True
+    if "pfma_va" not in s: s.pfma_va = bool(va_detected)
+    if "pfma_ltc" not in s: s.pfma_ltc = bool(ltc_detected)
+
+    # Seed PFMA conditions from canonical list produced by cost_controls
+    canonical = s.get("conditions_canonical", [])
+    # Fallback: merge per-person AL/MC lists if canonical missing
+    if not canonical and people:
+        merged = []
+        seen = set()
+        for p in people:
+            pid = p["id"]
+            for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
+                vals = s.get(key, [])
+                if isinstance(vals, list):
+                    for v in vals:
+                        if isinstance(v, str) and v in CONDITION_OPTIONS and v not in seen:
+                            seen.add(v); merged.append(v)
+        canonical = merged
+    # Initialize once if not set by user
+    if canonical and not s.get("pfma_conditions"):
+        s.pfma_conditions = _sanitize_conditions(canonical)
+
     # ---------- BOOKING FIRST ----------
     st.subheader("Get Connected to Expert Advice")
 
-    # one-time prototype defaults
+    # prototype defaults (first time only)
     if "pfma_defaults_applied" not in s:
         s.pfma_name = "Taylor Morgan"
         s.pfma_phone = "(555) 201-8890"
@@ -206,10 +209,8 @@ def render_pfma():
     colA, colB, colC = st.columns([1,1,1])
     with colA:
         if st.button("Back to Home", key="pfma_back_home", type="secondary"):
-            s.step = "intro"
-            st.rerun()
+            s.step = "intro"; st.rerun()
     with colB:
-        # PRIMARY action: book first
         if st.button("Book appointment", key="pfma_book_btn", type="primary"):
             s.pfma_booking = {
                 "name": s.pfma_name.strip(),
@@ -227,7 +228,8 @@ def render_pfma():
             st.success("Appointment request submitted. An advisor will reach out at your preferred time.")
             st.info("Add any optional details below to help your advisor prepare. Totally optional.")
     with colC:
-        st.button("Finish", key="pfma_finish", type="secondary", on_click=lambda: s.update(step="intro"))
+        if st.button("Finish", key="pfma_finish", type="secondary"):
+            s.step = "intro"; st.rerun()
 
     # ---------- OPTIONAL AFTER BOOKING ----------
     if not s.get("pfma_booked", False):
@@ -237,19 +239,18 @@ def render_pfma():
     st.divider()
     st.subheader("Optional details for your advisor")
 
+    # ensure defaults are clean before rendering multiselect
+    s.pfma_conditions = _sanitize_conditions(s.get("pfma_conditions"))
+
     # Group 1: Care needs & daily support
     with st.expander("Care needs & daily support", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
             st.multiselect(
                 "Chronic conditions (check all that apply)",
-                [
-                    "Dementia / memory loss","Parkinson’s","Stroke history","Diabetes",
-                    "CHF / heart disease","COPD / breathing issues","Cancer (active)",
-                    "Depression / anxiety","Other",
-                ],
+                CONDITION_OPTIONS,
+                default=_sanitize_conditions(s.get("pfma_conditions")),
                 key="pfma_conditions",
-                default=st.session_state.get("pfma_conditions", []),
             )
             st.multiselect(
                 "Activities that need support (ADLs/IADLs)",
@@ -310,9 +311,9 @@ def render_pfma():
 
     # Group 4: Benefits & coverage
     with st.expander("Benefits & coverage", expanded=False):
-        st.checkbox("Long-term care insurance", key="pfma_ltc", value=st.session_state.get("pfma_ltc", False))
-        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=st.session_state.get("pfma_va", False))
-        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=st.session_state.get("pfma_medicaid", False))
+        st.checkbox("Long-term care insurance", key="pfma_ltc", value=bool(s.get("pfma_ltc", False)))
+        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=bool(s.get("pfma_va", False)))
+        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=bool(s.get("pfma_medicaid", False)))
         st.text_input("Other coverage or notes (optional)", key="pfma_coverage_notes")
 
     st.divider()
@@ -336,13 +337,13 @@ def render_pfma():
         }
         st.success("Optional details saved.")
 
-# ------------- Data files present? -------------
+# ----------------------- Load JSONs ------------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
 if missing:
-    st.error("Missing required JSON files:\\n" + "\\n".join(f"• {m.name}" for m in missing))
+    st.error("Missing required JSON files:\n" + "\n".join(f"• {m.name}" for m in missing))
     st.stop()
 
-# ------------- Engines -------------
+# ----------------------- Engines ---------------------------
 try:
     planner = PlannerEngine(str(QA_PATH), str(REC_PATH))
 except Exception:
@@ -357,18 +358,20 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-# ------------- Session init -------------
+# ----------------------- Session init ----------------------
 if "step" not in st.session_state:
     st.session_state.step = "intro"
 
-# ------------- Sidebar -------------
+# ----------------------- Sidebar ---------------------------
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all, key="start_over_btn")
+
+# Easy entry to PFMA
 if st.sidebar.button("Schedule with an Advisor", use_container_width=True, key="pfma_sidebar"):
     st.session_state.step = "pfma"; st.rerun()
 
-# ------------- Flow -------------
+# ----------------------- Steps -----------------------------
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
     st.markdown(
@@ -478,14 +481,12 @@ elif st.session_state.step == "recommendations":
     for p in s.get("people", []):
         pid = p["id"]; name = p["display_name"]
         rec = s.get("planner_results", {}).get(pid, PlannerResult("in_home", [], {}, [], "", None))
-        care_type = getattr(rec, "care_type", None) if rec else None
-        if care_type not in {"none","in_home","assisted_living","memory_care"}:
-            care_type = "in_home"
-        reasons = getattr(rec, "reasons", []) if rec else []
-        narrative = getattr(rec, "narrative", "") if rec else ""
+        care_type = getattr(rec, "care_type", None) or "in_home"
+        reasons = getattr(rec, "reasons", []) or []
+        narrative = getattr(rec, "narrative", "") or ""
         nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
         st.subheader(f"{name}: {nice.get(care_type, care_type).title()} (recommended)")
-        for r in reasons or []: st.write("• " + str(r))
+        for r in reasons: st.write("• " + str(r))
         if narrative: st.info(narrative)
         options = ["none","in_home","assisted_living","memory_care"]
         idx = options.index(care_type) if care_type in options else 1
@@ -576,7 +577,8 @@ elif st.session_state.step == "breakdown":
             detail = ", ".join([f"Care: {pick('mc_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
         elif scenario == "in_home":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
-            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
+            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency"))
+            ctype = str(ctype).title() if isinstance(ctype, str) else "Agency"
             detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
         else:
             detail = "—"
@@ -628,13 +630,6 @@ elif st.session_state.step == "breakdown":
     else:
         msg = "Estimated runway from assets: 0 months"
     st.subheader(msg)
-
-    with st.expander("Assets (for context)"):
-        st.table([
-            {"Assets":"Common assets (cash, investments, etc.)","Amount":money(assets_common)},
-            {"Assets":"Detailed assets (home sale, etc.)","Amount":money(assets_detail)},
-            {"Assets":"Total assets","Amount":money(assets_total)},
-        ])
 
     st.divider()
     cta1, cta2 = st.columns(2)

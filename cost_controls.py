@@ -39,9 +39,6 @@ def _derive_chronic_for_engine(selected: List[str]) -> str:
         return "None"
     if len(selected) == 1 and selected[0] in {"Diabetes", "Parkinson's"}:
         return selected[0]
-    # Map strings that might come from the option set
-    if selected == ["Parkinson’s"]:
-        return "Parkinson's"
     return "Complex"
 
 def render_location_control() -> None:
@@ -89,43 +86,30 @@ def _inputs_namespace(**kwargs) -> SimpleNamespace:
         setattr(ns, k, v)
     return ns
 
-def _merge_into_canonical(items: List[str]):
-    """Union the given items into a single canonical list in session_state."""
-    if not isinstance(items, list):
-        return
-    s = st.session_state
-    existing = s.get("conditions_canonical", [])
-    seen = set(existing)
-    for it in items:
-        if it and it not in seen:
-            existing.append(it); seen.add(it)
-    s["conditions_canonical"] = existing
-
 def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
     with c1:
-        care_level = st.selectbox(
+        st.selectbox(
             f"{name} • Care level",
             ["Light", "Moderate", "High"],
             key=f"{pid}_al_care_level",
         )
-        room_type = st.selectbox(
+        st.selectbox(
             f"{name} • Room type",
             ["Studio", "1 Bedroom", "2 Bedroom", "Shared"],
             key=f"{pid}_al_room_type",
         )
     with c2:
-        mobility = st.selectbox(
+        st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_al_mobility",
         )
-        # New: multiselect chronic conditions (saved for PFMA)
+        # Multiselect chronic conditions (persist list for PFMA carryover)
         default_conditions = st.session_state.get(f"al_conditions_{pid}")
         if default_conditions is None:
-            # suggest a one-item default if the old single seed maps cleanly
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
         al_conditions = st.multiselect(
             f"{name} • Chronic conditions",
@@ -134,11 +118,7 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             key=f"al_conditions_{pid}",
         )
         # Derive the engine-friendly single value
-        al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
-        st.session_state[f"{pid}_al_chronic"] = al_chronic_for_engine
-
-    # Update canonical list for PFMA carryover
-    _merge_into_canonical(al_conditions)
+        st.session_state[f"{pid}_al_chronic"] = _derive_chronic_for_engine(al_conditions)
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -156,7 +136,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        hours = st.slider(
+        st.slider(
             f"{name} • Hours per day",
             min_value=1,
             max_value=24,
@@ -164,7 +144,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_ih_hours",
         )
     with c2:
-        days = st.slider(
+        st.slider(
             f"{name} • Days per month",
             min_value=1,
             max_value=31,
@@ -172,23 +152,19 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_ih_days",
         )
     with c3:
-        mobility = st.selectbox(
+        st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_ih_mobility",
         )
-    # Keep in-home chronic as the original single-select (engine expects this)
-    chronic = st.selectbox(
+    # Keep in-home chronic as the original single-select (unchanged)
+    st.selectbox(
         f"{name} • Chronic condition",
         ["None", "Diabetes", "Parkinson's", "Complex"],
         index=["None", "Diabetes", "Parkinson's", "Complex"].index(seeds["chronic_single"]),
         key=f"{pid}_ih_chronic",
     )
-
-    # Add specific single to canonical if it's one of the concrete conditions
-    if chronic in ("Diabetes", "Parkinson's"):
-        _merge_into_canonical([chronic])
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -206,19 +182,19 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
     with c1:
-        level = st.selectbox(
+        st.selectbox(
             f"{name} • Memory care level",
             ["Standard", "High Acuity"],
             key=f"{pid}_mc_level",
         )
-        mobility = st.selectbox(
+        st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_mc_mobility",
         )
     with c2:
-        # New: multiselect chronic conditions (saved for PFMA)
+        # Multiselect chronic conditions (persist list for PFMA carryover)
         default_conditions = st.session_state.get(f"mc_conditions_{pid}")
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
@@ -228,11 +204,7 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             default=default_conditions,
             key=f"mc_conditions_{pid}",
         )
-        mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
-        st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
-
-    # Update canonical list for PFMA carryover
-    _merge_into_canonical(mc_conditions)
+        st.session_state[f"{pid}_mc_chronic"] = _derive_chronic_for_engine(mc_conditions)
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -245,6 +217,31 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     )
     return int(calc.monthly_cost(inputs))
 
+def _rebuild_conditions_canonical():
+    """
+    Build a deduped union of all AL/MC multiselects plus Diabetes/Parkinson's from in-home singles.
+    Store at st.session_state['conditions_canonical'] for PFMA to consume.
+    """
+    seen = set()
+    union: List[str] = []
+
+    people = st.session_state.get("people", [])
+    for p in people:
+        pid = p["id"]
+        for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
+            vals = st.session_state.get(key)
+            if isinstance(vals, list):
+                for v in vals:
+                    if isinstance(v, str) and v in CONDITION_OPTIONS and v not in seen:
+                        seen.add(v); union.append(v)
+
+        # pull Diabetes/Parkinson's if present in in-home single select
+        v = st.session_state.get(f"{pid}_ih_chronic")
+        if v in {"Diabetes", "Parkinson's"} and v not in seen:
+            seen.add(v); union.append(v)
+
+    st.session_state["conditions_canonical"] = union
+
 def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> int:
     """
     Draw per-person scenario controls and compute monthly costs through CalculatorEngine.
@@ -252,21 +249,17 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
     Accepts and ignores extra kwargs like planner= to stay compatible with app.py.
     """
     _init_person_costs()
-    s = st.session_state
-    lf = float(s.get("location_factor", 1.0))
+    lf = float(st.session_state.get("location_factor", 1.0))
 
-    # Reset canonical on each render and rebuild from scratch based on current selections
-    s["conditions_canonical"] = []
-
-    people = s.get("people", [])
-    planner_results = s.get("planner_results", {})
+    people = st.session_state.get("people", [])
+    planner_results = st.session_state.get("planner_results", {})
 
     combined = 0
     for p in people:
         pid = p["id"]; name = p["display_name"]
         rec = planner_results.get(pid)
         recommended = getattr(rec, "care_type", "in_home") if rec else "in_home"
-        chosen = _get_override(pid, recommended) or "in_home"
+        chosen = _get_override(pid, recommended)
 
         st.subheader(f"{name} — Scenario: {chosen.replace('_',' ').title()}")
 
@@ -280,9 +273,12 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
             monthly = 0
 
         st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
-        s.person_costs[pid] = int(monthly)
+        st.session_state.person_costs[pid] = int(monthly)
         combined += int(monthly)
         st.divider()
+
+    # Rebuild canonical chronic-condition list for PFMA carryover
+    _rebuild_conditions_canonical()
 
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
