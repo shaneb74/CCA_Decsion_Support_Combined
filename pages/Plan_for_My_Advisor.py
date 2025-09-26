@@ -13,7 +13,6 @@ CONDITION_OPTIONS = [
     "Other",
 ]
 
-# ---------- Canonicalization ----------
 def _canon_condition(val: str | None) -> str | None:
     if not val:
         return None
@@ -34,9 +33,9 @@ def _canon_condition(val: str | None) -> str | None:
         "cancer": "Cancer (active)",
         "depression": "Depression / anxiety",
         "anxiety": "Depression / anxiety",
-        "other": "Other",
         "none": None,
         "complex": None,
+        "other": "Other",
     }
     if v in direct:
         return direct[v]
@@ -58,42 +57,45 @@ def _canon_condition(val: str | None) -> str | None:
         return "Depression / anxiety"
     return None
 
-def _merge_conditions_from_calculator() -> list[str]:
+def _merge_conditions() -> list[str]:
+    """
+    Prefer per-person canonical keys written by cost_controls:
+      - conditions_{pid}
+    Also merge any panel keys and legacy single-selects, then canonicalize.
+    """
     s = st.session_state
     merged: list[str] = []
     seen = set()
 
-    def add_many(vals):
+    def add(vals):
         for raw in vals or []:
             lab = _canon_condition(raw)
             if lab and lab not in seen:
                 merged.append(lab); seen.add(lab)
 
-    # Per-person lists written by cost_controls.py (the multiselects we added)
+    # 1) Canonical per-person keys (highest priority)
     for p in s.get("people", []):
         pid = p.get("id")
-        for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}", f"ih_conditions_{pid}"):
-            v = s.get(key)
-            if isinstance(v, list):
-                add_many(v)
-            elif isinstance(v, str):
-                add_many([v])
+        add(s.get(f"conditions_{pid}", []))
 
-    # Unscoped fallbacks if present
-    for key in ("al_conditions", "mc_conditions", "ih_conditions"):
-        v = s.get(key)
-        if isinstance(v, list):
-            add_many(v)
-        elif isinstance(v, str):
-            add_many([v])
-
-    # Legacy single-value selects from older panels
+    # 2) Panel multiselects
     for p in s.get("people", []):
         pid = p.get("id")
-        for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic", f"{pid}_ih_chronic"):
-            v = s.get(key)
-            if isinstance(v, str):
-                add_many([v])
+        for k in (f"al_conditions_{pid}", f"mc_conditions_{pid}", f"ih_conditions_{pid}"):
+            v = s.get(k)
+            add(v if isinstance(v, list) else [v] if isinstance(v, str) else [])
+
+    # 3) Legacy single-selects
+    for p in s.get("people", []):
+        pid = p.get("id")
+        for k in (f"{pid}_al_chronic", f"{pid}_mc_chronic", f"{pid}_ih_chronic"):
+            v = s.get(k)
+            add([v] if isinstance(v, str) else [])
+
+    # 4) Unscoped leftovers
+    for k in ("al_conditions", "mc_conditions", "ih_conditions"):
+        v = s.get(k)
+        add(v if isinstance(v, list) else [v] if isinstance(v, str) else [])
 
     return merged
 
@@ -120,7 +122,6 @@ def main():
     recs = s.get("planner_results", {})
     overrides = s.get("care_overrides", {})
 
-    # Summary
     with st.expander("Your current plan summary", expanded=True):
         if people and recs:
             nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
@@ -137,30 +138,17 @@ def main():
         else:
             st.info("No Cost Planner data yet.")
 
-    # Merge and force-set chronic conditions on every render so defaults stick
-    merged_now = _merge_conditions_from_calculator()
-    if merged_now:
-        s.pfma_conditions = merged_now
-
-    # VA/LTC defaults
+    # Always sync conditions on render
+    merged = _merge_conditions()
+    if merged:
+        s.pfma_conditions = merged
     ltc, va = _detect_ltc_va_defaults()
     if "pfma_ltc" not in s:
         s.pfma_ltc = bool(ltc)
     if "pfma_va" not in s:
         s.pfma_va = bool(va)
 
-    # Debug panel to prove what's in session
-    with st.expander("Debug: session keys & merge", expanded=False):
-        rows = []
-        for k in sorted([k for k in s.keys() if "condition" in k.lower() or "chronic" in k.lower()]):
-            rows.append(f"{k}: {s.get(k)}")
-        if not rows:
-            st.warning("No condition-related keys in session. If you opened this page in a new tab or via URL, you started a fresh session.")
-        else:
-            st.text("\n".join(rows))
-        st.write("Merged for PFMA:", s.get("pfma_conditions", []))
-
-    # One-time prototype defaults for booking details
+    # One-time prototype defaults
     if "pfma_defaults_applied" not in s:
         s.pfma_name = "Taylor Morgan"
         s.pfma_phone = "(555) 201-8890"
@@ -175,7 +163,6 @@ def main():
         s.pfma_booked = False
         s.pfma_defaults_applied = True
 
-    # Booking first
     st.subheader("Get Connected to Expert Advice")
     c1, c2 = st.columns(2)
     with c1:
@@ -235,11 +222,9 @@ def main():
     st.divider()
     st.subheader("Optional details for your advisor")
 
-    # Care needs & daily support
     with st.expander("Care needs & daily support"):
         col1, col2 = st.columns(2)
         with col1:
-            # The key is the source of truth; default is only used on first render.
             st.multiselect(
                 "Chronic conditions (check all that apply)",
                 CONDITION_OPTIONS,
@@ -267,7 +252,6 @@ def main():
                 key="pfma_why",
             )
 
-    # Care preferences
     with st.expander("Care preferences"):
         st.multiselect(
             "Settings you’re open to",
@@ -281,7 +265,6 @@ def main():
             key="pfma_visited",
         )
 
-    # Home & logistics
     with st.expander("Home & logistics"):
         st.selectbox(
             "Current living situation",
@@ -300,7 +283,6 @@ def main():
         )
         st.checkbox("Has pets to consider", key="pfma_pets", value=False)
 
-    # Benefits & coverage
     with st.expander("Benefits & coverage"):
         st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False))
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False))
