@@ -1,7 +1,7 @@
 # asset_engine.py
 from __future__ import annotations
 from dataclasses import dataclass, asdict
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 import streamlit as st
 
 def _fmt(x: int | float) -> str:
@@ -90,11 +90,18 @@ class IncomeAssetsEngine:
             st.metric("Subtotal — Household income", _fmt(subtotal))
         return subtotal
 
-    def _section_benefits(self, names: list[str]):
+    def _section_benefits(self, names: List[str]):
+        """
+        Restored rich VA/A&A & LTC block:
+        - VA wizard or direct entry; stores a_va_monthly / b_va_monthly
+        - LTC Yes/No per person; stores has_ltc_insurance (True if either Yes)
+        - Uses calculator.settings['ltc_monthly_add'] as the LTC monthly add (default 1800)
+        """
         with st.expander("Benefits (VA, Long-Term Care insurance)", expanded=True):
             nA = names[0] if names else "Person A"
             nB = names[1] if len(names) > 1 else None
 
+            # Settings seed
             settings = getattr(self.calculator, "settings", {}) if self.calculator else {}
             settings = settings or {}
             if "va_mapr_2025" not in settings:
@@ -113,7 +120,7 @@ class IncomeAssetsEngine:
             va_mapr = settings["va_mapr_2025"]
             ltc_add_val = int(settings["ltc_monthly_add"])
 
-            def va_block(prefix: str, person_name: str):
+            def va_block(prefix: str, person_name: str) -> Dict[str, Any]:
                 st.write(f"**{person_name}**")
                 choice = st.radio(
                     f"Choose an option for {person_name}:",
@@ -126,16 +133,24 @@ class IncomeAssetsEngine:
                     key=f"{prefix}_va_path",
                 )
                 result = {"monthly": 0, "detail": "No VA pension"}
+
                 if choice.startswith("I already receive"):
-                    tier = st.selectbox("Select status", list(va_mapr.keys()), key=f"{prefix}_va_tier",
-                                        help="Monthly caps from VA MAPR. Enter your actual payment if you know it.")
+                    tier = st.selectbox(
+                        "Select status",
+                        list(va_mapr.keys()),
+                        key=f"{prefix}_va_tier",
+                        help="Monthly caps from VA MAPR. Enter your actual payment if you know it.",
+                    )
                     cap = int(va_mapr[tier])
                     st.caption(f"Estimated monthly cap for this tier: {_fmt(cap)}.")
                     amt = st.number_input(
                         "Monthly VA payment (enter actual if known; otherwise use cap)",
-                        min_value=0, step=25, value=cap, key=f"{prefix}_va_actual"
+                        min_value=0, step=25,
+                        value=int(st.session_state.get(f"{prefix}_va_actual", cap) or cap),
+                        key=f"{prefix}_va_actual",
                     )
                     result = {"monthly": int(amt), "detail": tier}
+
                 elif choice.startswith("I served"):
                     st.info("Quick check (not exhaustive):")
                     wartime   = st.checkbox("Served during a wartime period", key=f"{prefix}_wartime")
@@ -143,6 +158,7 @@ class IncomeAssetsEngine:
                     discharge = st.checkbox("Discharge not dishonorable", key=f"{prefix}_discharge")
                     need_aa   = st.checkbox("Needs help with daily activities or housebound", key=f"{prefix}_need_aa")
                     networth  = st.checkbox("Net worth under VA limit", key=f"{prefix}_networth")
+
                     likely = wartime and age_dis and discharge and networth
                     if likely:
                         st.success("You may qualify for VA pension; Aid & Attendance may apply if daily help/housebound.")
@@ -150,8 +166,10 @@ class IncomeAssetsEngine:
                     else:
                         st.warning("Based on these answers, VA pension may not apply. You can still check with a local VSO.")
                         result["detail"] = "Wizard: uncertain"
+
                 return result
 
+            # VA blocks
             col1, col2 = st.columns(2)
             with col1:
                 a_res = va_block("a", nA)
@@ -161,24 +179,41 @@ class IncomeAssetsEngine:
             else:
                 b_res = {"monthly": 0, "detail": "No VA pension"}
 
+            # LTC flags per person
             lc1, lc2 = st.columns(2)
             with lc1:
-                a_ltc = st.selectbox(f"Long-Term Care insurance — {nA}", ["No", "Yes"], key="a_ltc")
+                a_ltc_choice = st.selectbox(
+                    f"Long-term care insurance — {nA}",
+                    ["No", "Yes"],
+                    key="a_ltc_choice",
+                )
             if nB:
                 with lc2:
-                    b_ltc = st.selectbox(f"Long-Term Care insurance — {nB}", ["No", "Yes"], key="b_ltc")
+                    b_ltc_choice = st.selectbox(
+                        f"Long-term care insurance — {nB}",
+                        ["No", "Yes"],
+                        key="b_ltc_choice",
+                    )
             else:
-                st.selectbox("Long-Term Care insurance — (n/a)", ["No"], key="b_ltc_disabled", disabled=True)
-                b_ltc = "No"
+                b_ltc_choice = "No"
+                st.selectbox("Long-term care insurance — (n/a)", ["No"], key="b_ltc_choice_disabled", disabled=True)
 
+            # Persist VA monthly for PFMA & Breakdown consumers
             a_va = int(a_res.get("monthly", 0))
             b_va = int(b_res.get("monthly", 0)) if nB else 0
             st.session_state["a_va_monthly"] = a_va
             st.session_state["b_va_monthly"] = b_va
 
-            a_ltc_add = ltc_add_val if a_ltc == "Yes" else 0
-            b_ltc_add = ltc_add_val if (nB and b_ltc == "Yes") else 0
+            # Persist LTC flags for PFMA
+            has_ltc = (a_ltc_choice == "Yes") or (b_ltc_choice == "Yes")
+            st.session_state["has_ltc_insurance"] = bool(has_ltc)
+
+            # If you use an LTC add-on in affordability math, compute it (kept for compatibility)
+            a_ltc_add = ltc_add_val if a_ltc_choice == "Yes" else 0
+            b_ltc_add = ltc_add_val if (nB and b_ltc_choice == "Yes") else 0
+
             benefits_total = a_va + b_va + a_ltc_add + b_ltc_add
+            st.caption("These flags feed the PFMA Benefits & coverage checkboxes.")
             st.metric("Subtotal — Benefits (VA + LTC add-ons)", _fmt(benefits_total))
 
         return a_va, b_va, a_ltc_add, b_ltc_add, benefits_total
