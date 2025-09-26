@@ -134,7 +134,7 @@ def render_pfma():
     if "pfma_ltc" not in s:
         s.pfma_ltc = bool(ltc_detected)
 
-        # 3) Merge chronic conditions chosen in Cost Planner (AL/MC) across all people
+    # 3) Merge chronic conditions chosen in Cost Planner (AL/MC/IH) across all people
     # Normalize everything to the PFMA pick-list labels so defaults actually match.
     CANON = {
         "dementia": "Dementia / memory loss",
@@ -164,12 +164,9 @@ def render_pfma():
     def _canon_label(val: str | None) -> str | None:
         if not val:
             return None
-        # normalize quotes, case, and whitespace
         v = str(val).strip().replace("’", "'").lower()
-        # quick exact hits
         if v in CANON:
             return CANON[v]
-        # soft contains for a few noisy cases
         if "alzheimer" in v or "dementia" in v or "memory" in v:
             return "Dementia / memory loss"
         if "parkinson" in v:
@@ -188,30 +185,32 @@ def render_pfma():
             return "Depression / anxiety"
         if "other" in v:
             return "Other"
-        return None  # unknowns don’t prefill
+        return None
 
     merged_conditions: list[str] = []
+    seen = set()
 
     def _add_many(items):
-        seen = set(merged_conditions)
-        for raw in (items or []):
+        if not items:
+            return
+        for raw in items:
             lab = _canon_label(raw)
             if lab and lab not in seen:
                 merged_conditions.append(lab)
                 seen.add(lab)
 
-    # Preferred: new multiselects saved per person (AL/MC)
+    # Preferred: multiselects saved per person in Cost Planner
     for p in s.get("people", []):
         pid = p["id"]
-        for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
+        for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}", f"ih_conditions_{pid}"):
             vals = s.get(key)
             if isinstance(vals, list):
                 _add_many(vals)
             elif isinstance(vals, str) and vals:
                 _add_many([vals])
 
-    # Also look for unscoped multiselects if any older run set them
-    for key in ("al_conditions", "mc_conditions"):
+    # Also check any unscoped lists from older sessions
+    for key in ("al_conditions", "mc_conditions", "ih_conditions"):
         vals = s.get(key)
         if isinstance(vals, list):
             _add_many(vals)
@@ -226,8 +225,8 @@ def render_pfma():
             if isinstance(val, str) and val:
                 _add_many([val])
 
-    # Only prefill if the user hasn’t already interacted with PFMA conditions
-    if merged_conditions and not s.get("pfma_conditions"):
+    # Be assertive: if we found anything, set pfma_conditions now so the widget sees it.
+    if merged_conditions:
         s.pfma_conditions = merged_conditions
 
     # ---------- BOOKING FIRST ----------
