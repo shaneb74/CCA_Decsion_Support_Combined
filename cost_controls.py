@@ -14,7 +14,7 @@ LOCATION_FACTORS = {
     "Florida": 1.05,
 }
 
-# Chronic condition options (shared)
+# Chronic condition options (shared) — canonical labels used across the app
 CONDITION_OPTIONS: List[str] = [
     "Dementia / memory loss",
     "Parkinson's",
@@ -89,24 +89,24 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
     with c1:
-        care_level = st.selectbox(
+        st.selectbox(
             f"{name} • Care level",
             ["Light", "Moderate", "High"],
             key=f"{pid}_al_care_level",
         )
-        room_type = st.selectbox(
+        st.selectbox(
             f"{name} • Room type",
             ["Studio", "1 Bedroom", "2 Bedroom", "Shared"],
             key=f"{pid}_al_room_type",
         )
     with c2:
-        mobility = st.selectbox(
+        st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_al_mobility",
         )
-        # New: multiselect chronic conditions (saved for PFMA)
+        # Multiselect chronic conditions (saved for PFMA)
         default_conditions = st.session_state.get(f"al_conditions_{pid}")
         if default_conditions is None:
             # suggest a one-item default if the old single seed maps cleanly
@@ -118,8 +118,7 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             key=f"al_conditions_{pid}",
         )
         # Derive the engine-friendly single value
-        al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
-        st.session_state[f"{pid}_al_chronic"] = al_chronic_for_engine
+        st.session_state[f"{pid}_al_chronic"] = _derive_chronic_for_engine(al_conditions)
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -137,7 +136,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        hours = st.slider(
+        st.slider(
             f"{name} • Hours per day",
             min_value=1,
             max_value=24,
@@ -145,7 +144,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_ih_hours",
         )
     with c2:
-        days = st.slider(
+        st.slider(
             f"{name} • Days per month",
             min_value=1,
             max_value=31,
@@ -153,19 +152,24 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_ih_days",
         )
     with c3:
-        mobility = st.selectbox(
+        st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_ih_mobility",
         )
-    # Keep in-home chronic as the original single-select (you didn't ask to change this one)
+    # Keep in-home chronic as the original single-select
     chronic = st.selectbox(
         f"{name} • Chronic condition",
         ["None", "Diabetes", "Parkinson's", "Complex"],
         index=["None", "Diabetes", "Parkinson's", "Complex"].index(seeds["chronic_single"]),
         key=f"{pid}_ih_chronic",
     )
+    # Symmetry: expose a PFMA-friendly list too (optional, empty for None/Complex)
+    if chronic in {"Diabetes", "Parkinson's"}:
+        st.session_state[f"ih_conditions_{pid}"] = [chronic]
+    else:
+        st.session_state[f"ih_conditions_{pid}"] = []
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -183,19 +187,19 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
     with c1:
-        level = st.selectbox(
+        st.selectbox(
             f"{name} • Memory care level",
             ["Standard", "High Acuity"],
             key=f"{pid}_mc_level",
         )
-        mobility = st.selectbox(
+        st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_mc_mobility",
         )
     with c2:
-        # New: multiselect chronic conditions (saved for PFMA)
+        # Multiselect chronic conditions (saved for PFMA)
         default_conditions = st.session_state.get(f"mc_conditions_{pid}")
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
@@ -205,8 +209,7 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             default=default_conditions,
             key=f"mc_conditions_{pid}",
         )
-        mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
-        st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
+        st.session_state[f"{pid}_mc_chronic"] = _derive_chronic_for_engine(mc_conditions)
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
