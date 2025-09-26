@@ -102,21 +102,18 @@ def money(n: int | float) -> str:
     except Exception:
         return "$0"
 
-def goto_pfma():
-    """Always navigate to the PFMA page in the same tab if possible."""
-    try:
-        st.switch_page("pages/Plan_for_My_Advisor.py")
-    except Exception:
-        # Last-resort fallback: absolute link (may open a new tab on some hosts)
-        st.link_button("Open Advisor Prototype", "https://demo-combined-decision-support.streamlit.app/Plan_for_My_Advisor")
-
+# ----------------------- Sidebar ---------------------------
 def sidebar_links():
     st.sidebar.title("Senior Navigator")
     st.sidebar.caption("Planner → Recommendations → Costs → Household")
     st.sidebar.button("Start over", on_click=reset_all, key="start_over_btn")
-    # Use a normal button + switch_page to guarantee same-tab nav
+    # Sidebar PFMA button: same-tab switch; on failure, show a sidebar link TEXT, not a new button in the body
     if st.sidebar.button("Schedule with an Advisor", key="pfma_sidebar_btn", use_container_width=True):
-        goto_pfma()
+        try:
+            st.switch_page("pages/Plan_for_My_Advisor.py")
+        except Exception:
+            st.sidebar.info("Navigation failed. Use this link instead:")
+            st.sidebar.markdown("[Open Advisor Prototype](/Plan_for_My_Advisor)")
 
 # ----------------------- Load JSONs ------------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
@@ -143,7 +140,7 @@ except Exception:
 if "step" not in st.session_state:
     st.session_state.step = "intro"
 
-# Sidebar
+# Sidebar on every page
 sidebar_links()
 
 # ----------------------- Steps -----------------------------
@@ -167,7 +164,11 @@ Choosing senior living or in-home support can feel overwhelming.
             st.rerun()
     with c2:
         if st.button("Open Advisor Prototype", key="intro_pfma_btn"):
-            goto_pfma()
+            try:
+                st.switch_page("pages/Plan_for_My_Advisor.py")
+            except Exception:
+                st.sidebar.info("Navigation failed. Use this link instead:")
+                st.sidebar.markdown("[Open Advisor Prototype](/Plan_for_My_Advisor)")
 
 elif st.session_state.step == "audience":
     st.header("Who is this plan for?")
@@ -349,7 +350,11 @@ elif st.session_state.step == "calculator":
             st.rerun()
     with c3:
         if st.button("Schedule with an Advisor", key="calc_pfma_btn"):
-            goto_pfma()
+            try:
+                st.switch_page("pages/Plan_for_My_Advisor.py")
+            except Exception:
+                st.sidebar.info("Navigation failed. Use this link instead:")
+                st.sidebar.markdown("[Open Advisor Prototype](/Plan_for_My_Advisor)")
 
 elif st.session_state.step == "household":
     st.header("Household & Budget (optional)")
@@ -514,4 +519,8 @@ elif st.session_state.step == "breakdown":
             st.rerun()
     with cta2:
         if st.button("Schedule with an Advisor", key="bd_pfma_btn"):
-            goto_pfma()
+            try:
+                st.switch_page("pages/Plan_for_My_Advisor.py")
+            except Exception:
+                st.sidebar.info("Navigation failed. Use this link instead:")
+                st.sidebar.markdown("[Open Advisor Prototype](/Plan_for_My_Advisor)")
