@@ -134,32 +134,99 @@ def render_pfma():
     if "pfma_ltc" not in s:
         s.pfma_ltc = bool(ltc_detected)
 
-    # 3) Merge chronic conditions chosen in Cost Planner (AL/MC) across all people
+        # 3) Merge chronic conditions chosen in Cost Planner (AL/MC) across all people
+    # Normalize everything to the PFMA pick-list labels so defaults actually match.
+    CANON = {
+        "dementia": "Dementia / memory loss",
+        "alzheimers": "Dementia / memory loss",
+        "alzheimer's": "Dementia / memory loss",
+        "alzheimer’s": "Dementia / memory loss",
+        "parkinsons": "Parkinson's",
+        "parkinson's": "Parkinson's",
+        "parkinson’s": "Parkinson's",
+        "stroke": "Stroke history",
+        "stroke history": "Stroke history",
+        "diabetes": "Diabetes",
+        "chf": "CHF / heart disease",
+        "heart failure": "CHF / heart disease",
+        "heart disease": "CHF / heart disease",
+        "copd": "COPD / breathing issues",
+        "breathing issues": "COPD / breathing issues",
+        "respiratory": "COPD / breathing issues",
+        "cancer": "Cancer (active)",
+        "depression": "Depression / anxiety",
+        "anxiety": "Depression / anxiety",
+        "complex": None,  # don't prefill "Complex" as a specific condition
+        "none": None,
+        "other": "Other",
+    }
+
+    def _canon_label(val: str | None) -> str | None:
+        if not val:
+            return None
+        # normalize quotes, case, and whitespace
+        v = str(val).strip().replace("’", "'").lower()
+        # quick exact hits
+        if v in CANON:
+            return CANON[v]
+        # soft contains for a few noisy cases
+        if "alzheimer" in v or "dementia" in v or "memory" in v:
+            return "Dementia / memory loss"
+        if "parkinson" in v:
+            return "Parkinson's"
+        if "stroke" in v:
+            return "Stroke history"
+        if "diab" in v:
+            return "Diabetes"
+        if "heart" in v or "chf" in v or "cardio" in v:
+            return "CHF / heart disease"
+        if "copd" in v or "breath" in v or "respir" in v:
+            return "COPD / breathing issues"
+        if "cancer" in v:
+            return "Cancer (active)"
+        if "depress" in v or "anx" in v:
+            return "Depression / anxiety"
+        if "other" in v:
+            return "Other"
+        return None  # unknowns don’t prefill
+
     merged_conditions: list[str] = []
 
-    def _add_unique(seq, items):
-        seen = set(seq)
-        for it in items:
-            if it and it not in seen:
-                seq.append(it)
-                seen.add(it)
+    def _add_many(items):
+        seen = set(merged_conditions)
+        for raw in (items or []):
+            lab = _canon_label(raw)
+            if lab and lab not in seen:
+                merged_conditions.append(lab)
+                seen.add(lab)
 
-    # preferred source: new multiselects we saved per person
+    # Preferred: new multiselects saved per person (AL/MC)
     for p in s.get("people", []):
         pid = p["id"]
         for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
             vals = s.get(key)
-            if isinstance(vals, list) and vals:
-                _add_unique(merged_conditions, vals)
+            if isinstance(vals, list):
+                _add_many(vals)
+            elif isinstance(vals, str) and vals:
+                _add_many([vals])
 
-    # fallback: legacy single-value engine inputs
+    # Also look for unscoped multiselects if any older run set them
+    for key in ("al_conditions", "mc_conditions"):
+        vals = s.get(key)
+        if isinstance(vals, list):
+            _add_many(vals)
+        elif isinstance(vals, str) and vals:
+            _add_many([vals])
+
+    # Fallback: legacy single-value selects the old panels used
     for p in s.get("people", []):
         pid = p["id"]
-        for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic"):
+        for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic", f"{pid}_ih_chronic"):
             val = s.get(key)
-            if val in ("Diabetes", "Parkinson's"):
-                _add_unique(merged_conditions, [val])
+            if isinstance(val, str) and val:
+                _add_many([val])
 
+    # Only prefill if the user hasn’t already interacted with PFMA conditions
     if merged_conditions and not s.get("pfma_conditions"):
         s.pfma_conditions = merged_conditions
 
