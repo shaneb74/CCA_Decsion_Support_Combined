@@ -88,7 +88,7 @@ CONDITION_OPTIONS = [
 def _pfma_merge_conditions_from_canon() -> list[str]:
     """
     Preferred source of truth: conditions_{pid}, written by cost_controls.py.
-    Falls back to panel-specific and legacy keys if present.
+    Falls back to panel-specific and legacy keys if present (defensive).
     """
     s = st.session_state
     merged, seen = [], set()
@@ -105,7 +105,7 @@ def _pfma_merge_conditions_from_canon() -> list[str]:
         if isinstance(vals, list):
             add(vals)
 
-    # 2) Panel multiselect fallbacks
+    # 2) Panel multiselect fallbacks (if any old state still exists)
     for p in s.get("people", []):
         pid = p["id"]
         for k in (f"al_conditions_{pid}", f"mc_conditions_{pid}", f"ih_conditions_{pid}"):
@@ -130,19 +130,72 @@ def _pfma_merge_conditions_from_canon() -> list[str]:
 
     return merged
 
+def _truthy(v) -> bool:
+    try:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return v > 0
+        s = str(v).strip().lower()
+        return s in {"true", "yes", "y", "1", "on", "checked"}
+    except Exception:
+        return False
+
 def _pfma_detect_ltc_va_defaults():
     s = st.session_state
-    va = any([s.get("a_va_monthly", 0), s.get("b_va_monthly", 0), s.get("va_monthly", 0)])
+
+    # VA: any non-zero monthly or obvious flag
+    va = any([
+        _truthy(s.get("a_va_monthly", 0)),
+        _truthy(s.get("b_va_monthly", 0)),
+        _truthy(s.get("va_monthly", 0)),
+        _truthy(s.get("va_benefit", 0)),
+        _truthy(s.get("va_flag", False)),
+    ])
+
+    # LTC: aggressively inclusive
     ltc = False
-    for k in ("ltc_insurance", "has_ltc_insurance", "household_ltc", "ltc_policy"):
-        v = s.get(k, False)
-        if bool(v) and str(v).lower() not in ("false", "0", "", "none", "no"):
-            ltc = True; break
+
+    strong_ltc_keys = [
+        "ltc_insurance", "has_ltc_insurance", "household_ltc", "ltc_policy",
+        "ltc_benefit", "ltc_benefits", "ltc_monthly", "ltc_daily",
+        "a_ltc", "b_ltc", "have_ltc", "ltc_coverage", "ltc_provider",
+        "long_term_care", "long_term_care_insurance",
+        "coverage_ltc",
+    ]
+    for k in strong_ltc_keys:
+        if _truthy(s.get(k)):
+            ltc = True
+            break
+
     if not ltc:
         for k, v in s.items():
-            if "ltc" in str(k).lower() and bool(v) and str(v).lower() not in ("false","0","","none","no"):
-                ltc = True; break
+            kl = str(k).lower()
+            if ("ltc" in kl or "long_term_care" in kl) and _truthy(v):
+                ltc = True
+                break
+
+    if not ltc and s.get("pfma_payer") == "Long-term care insurance":
+        ltc = True
+
     return ltc, va
+
+def _ensure_pfma_prototype_defaults():
+    s = st.session_state
+    if "pfma_defaults_applied" in s:
+        return
+    s.pfma_name = s.get("pfma_name", "Taylor Morgan")
+    s.pfma_phone = s.get("pfma_phone", "(555) 201-8890")
+    s.pfma_email = s.get("pfma_email", "taylor@example.com")
+    s.pfma_zip = s.get("pfma_zip", "94110")
+    s.pfma_when = s.get("pfma_when", "Planning (1–3 months)")
+    s.pfma_best_time = s.get("pfma_best_time", "Weekday mornings")
+    s.pfma_relationship = s.get("pfma_relationship", "Self")
+    s.pfma_payer = s.get("pfma_payer", "Prefer not to say")
+    s.pfma_notes = s.get("pfma_notes", "")
+    s.pfma_age_band = s.get("pfma_age_band", "65–74")
+    s.pfma_booked = s.get("pfma_booked", False)
+    s.pfma_defaults_applied = True
 
 def render_pfma():
     st.header("Plan for My Advisor")
@@ -174,24 +227,15 @@ def render_pfma():
     detected_conditions = _pfma_merge_conditions_from_canon()
     if detected_conditions:
         s.pfma_conditions = detected_conditions
-    ltc, va = _pfma_detect_ltc_va_defaults()
-    if "pfma_ltc" not in s: s.pfma_ltc = bool(ltc)
-    if "pfma_va"  not in s: s.pfma_va  = bool(va)
 
-    # One-time prototype defaults for booking details
-    if "pfma_defaults_applied" not in s:
-        s.pfma_name = "Taylor Morgan"
-        s.pfma_phone = "(555) 201-8890"
-        s.pfma_email = "taylor@example.com"
-        s.pfma_zip = "94110"
-        s.pfma_when = "Planning (1–3 months)"
-        s.pfma_best_time = "Weekday mornings"
-        s.pfma_relationship = "Self"
-        s.pfma_payer = "Prefer not to say"
-        s.pfma_notes = ""
-        s.pfma_age_band = "65–74"
-        s.pfma_booked = False
-        s.pfma_defaults_applied = True
+    ltc, va = _pfma_detect_ltc_va_defaults()
+    if "pfma_ltc" not in s or (s.get("pfma_ltc") is False and ltc):
+        s.pfma_ltc = bool(ltc)
+    if "pfma_va" not in s or (s.get("pfma_va") is False and va):
+        s.pfma_va = bool(va)
+
+    # Prototype defaults
+    _ensure_pfma_prototype_defaults()
 
     # ---------- BOOKING FIRST ----------
     st.subheader("Get Connected to Expert Advice")
@@ -468,8 +512,13 @@ elif st.session_state.step == "planner":
     st.markdown("Answer these quick questions to get a personalized recommendation.")
 
     answers = {}
-    for q_idx, q in enumerate(planner.qa.get("questions", []), start=1):
-        label = q["question"]; amap = q.get("answers", {})
+    # Load Q&A from engine
+    try:
+        qa_questions = planner.qa.get("questions", [])
+    except Exception:
+        qa_questions = []
+    for q_idx, q in enumerate(qa_questions, start=1):
+        label = q.get("question", f"Question {q_idx}"); amap = q.get("answers", {})
         if not amap or not isinstance(amap, dict):
             st.warning(f"Skipping question '{label}' due to invalid answers"); continue
         key = f"q{q_idx}_{pid}"
@@ -601,7 +650,8 @@ elif st.session_state.step == "breakdown":
             detail = ", ".join([f"Care: {pick('mc_care_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
         elif scenario == "in_home":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
-            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title() if isinstance(s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")), str) else "Agency"
+            ctype_val = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency"))
+            ctype = ctype_val.title() if isinstance(ctype_val, str) else "Agency"
             detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
         else:
             detail = "—"
