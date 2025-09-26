@@ -1,5 +1,4 @@
 # pages/Plan_for_My_Advisor.py
-# Multipage PFMA page. Put this file in /pages.
 import streamlit as st
 
 CONDITION_OPTIONS = [
@@ -14,12 +13,12 @@ CONDITION_OPTIONS = [
     "Other",
 ]
 
+# ---------- Canonicalization ----------
 def _canon_condition(val: str | None) -> str | None:
     if not val:
         return None
     v = str(val).strip().replace("’", "'").lower()
-    # direct map
-    canon = {
+    direct = {
         "parkinsons": "Parkinson's",
         "parkinson's": "Parkinson's",
         "parkinson’s": "Parkinson's",
@@ -39,8 +38,8 @@ def _canon_condition(val: str | None) -> str | None:
         "none": None,
         "complex": None,
     }
-    if v in canon:
-        return canon[v]
+    if v in direct:
+        return direct[v]
     if "alzheimer" in v or "dementia" in v or "memory" in v:
         return "Dementia / memory loss"
     if "parkinson" in v:
@@ -63,44 +62,48 @@ def _merge_conditions_from_calculator() -> list[str]:
     s = st.session_state
     merged: list[str] = []
     seen = set()
+
     def add_many(vals):
-        nonlocal merged, seen
         for raw in vals or []:
             lab = _canon_condition(raw)
             if lab and lab not in seen:
                 merged.append(lab); seen.add(lab)
-    # per-person lists created by cost_controls.py
+
+    # Per-person lists written by cost_controls.py (the multiselects we added)
     for p in s.get("people", []):
-        pid = p["id"]
+        pid = p.get("id")
         for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}", f"ih_conditions_{pid}"):
             v = s.get(key)
             if isinstance(v, list):
                 add_many(v)
             elif isinstance(v, str):
                 add_many([v])
-        # legacy single-value fallbacks
-        for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic", f"{pid}_ih_chronic"):
-            v = s.get(key)
-            if isinstance(v, str):
-                add_many([v])
-    # also check any unscoped older keys
+
+    # Unscoped fallbacks if present
     for key in ("al_conditions", "mc_conditions", "ih_conditions"):
         v = s.get(key)
         if isinstance(v, list):
             add_many(v)
         elif isinstance(v, str):
             add_many([v])
+
+    # Legacy single-value selects from older panels
+    for p in s.get("people", []):
+        pid = p.get("id")
+        for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic", f"{pid}_ih_chronic"):
+            v = s.get(key)
+            if isinstance(v, str):
+                add_many([v])
+
     return merged
 
 def _detect_ltc_va_defaults():
     s = st.session_state
-    # VA if any monthly > 0
     va = any([s.get("a_va_monthly", 0), s.get("b_va_monthly", 0), s.get("va_monthly", 0)])
-    # LTC: any meaningful truthy flag containing 'ltc'
     ltc = False
     for k in ("ltc_insurance", "has_ltc_insurance", "household_ltc", "ltc_policy"):
         v = s.get(k, False)
-        if bool(v) and str(v).lower() not in ("false","0","","none","no"):
+        if bool(v) and str(v).lower() not in ("false", "0", "", "none", "no"):
             ltc = True; break
     if not ltc:
         for k, v in s.items():
@@ -117,6 +120,7 @@ def main():
     recs = s.get("planner_results", {})
     overrides = s.get("care_overrides", {})
 
+    # Summary
     with st.expander("Your current plan summary", expanded=True):
         if people and recs:
             nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
@@ -133,7 +137,30 @@ def main():
         else:
             st.info("No Cost Planner data yet.")
 
-    # defaults once
+    # Merge and force-set chronic conditions on every render so defaults stick
+    merged_now = _merge_conditions_from_calculator()
+    if merged_now:
+        s.pfma_conditions = merged_now
+
+    # VA/LTC defaults
+    ltc, va = _detect_ltc_va_defaults()
+    if "pfma_ltc" not in s:
+        s.pfma_ltc = bool(ltc)
+    if "pfma_va" not in s:
+        s.pfma_va = bool(va)
+
+    # Debug panel to prove what's in session
+    with st.expander("Debug: session keys & merge", expanded=False):
+        rows = []
+        for k in sorted([k for k in s.keys() if "condition" in k.lower() or "chronic" in k.lower()]):
+            rows.append(f"{k}: {s.get(k)}")
+        if not rows:
+            st.warning("No condition-related keys in session. If you opened this page in a new tab or via URL, you started a fresh session.")
+        else:
+            st.text("\n".join(rows))
+        st.write("Merged for PFMA:", s.get("pfma_conditions", []))
+
+    # One-time prototype defaults for booking details
     if "pfma_defaults_applied" not in s:
         s.pfma_name = "Taylor Morgan"
         s.pfma_phone = "(555) 201-8890"
@@ -146,20 +173,9 @@ def main():
         s.pfma_notes = ""
         s.pfma_age_band = "65–74"
         s.pfma_booked = False
-        # VA/LTC
-        ltc, va = _detect_ltc_va_defaults()
-        s.pfma_ltc = bool(ltc)
-        s.pfma_va = bool(va)
-        # merge chronic conditions immediately so widget shows defaults
-        merged = _merge_conditions_from_calculator()
-        s.pfma_conditions = merged
         s.pfma_defaults_applied = True
 
-    # Allow refresh of conditions on every visit in case user changed calculator
-    merged_now = _merge_conditions_from_calculator()
-    if merged_now and set(merged_now) != set(s.get("pfma_conditions", [])):
-        s.pfma_conditions = merged_now
-
+    # Booking first
     st.subheader("Get Connected to Expert Advice")
     c1, c2 = st.columns(2)
     with c1:
@@ -179,7 +195,8 @@ def main():
         st.selectbox("Best time to call",
                      ["Weekday mornings","Weekday afternoons","Weekday evenings","Weekend"],
                      key="pfma_best_time")
-        st.text_area("Any must-haves or constraints? (optional)", key="pfma_notes",
+        st.text_area("Any must-haves or constraints? (optional)",
+                     key="pfma_notes",
                      placeholder="e.g., near Pasadena, small community, pet-friendly")
         st.selectbox("Primary payer (optional)",
                      ["Prefer not to say","Private pay","Long-term care insurance","Medicaid (or waiver)","VA benefit","Other / mixed"],
@@ -189,8 +206,7 @@ def main():
     colA, colB, colC = st.columns([1,1,1])
     with colA:
         if st.button("Back to Home", key="pfma_back_home"):
-            s.step = "intro"
-            st.rerun()
+            s.step = "intro"; st.rerun()
     with colB:
         if st.button("Book appointment", key="pfma_book_btn"):
             s.pfma_booking = {
@@ -223,6 +239,7 @@ def main():
     with st.expander("Care needs & daily support"):
         col1, col2 = st.columns(2)
         with col1:
+            # The key is the source of truth; default is only used on first render.
             st.multiselect(
                 "Chronic conditions (check all that apply)",
                 CONDITION_OPTIONS,
@@ -285,7 +302,6 @@ def main():
 
     # Benefits & coverage
     with st.expander("Benefits & coverage"):
-        # defaults were set on load
         st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False))
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False))
         st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=s.get("pfma_medicaid", False))
