@@ -99,36 +99,69 @@ def render_pfma():
         else:
             st.info("No Cost Planner data yet.")
 
-    # Infer defaults from calculator/household so optional checkboxes prefill
-    va_detected = any([
-        st.session_state.get("a_va_monthly", 0),
-        st.session_state.get("b_va_monthly", 0),
-        st.session_state.get("va_monthly", 0),
-    ])
-    ltc_detected = False
-    for k, v in st.session_state.items():
-        if "ltc" in str(k).lower() and (bool(v) and str(v) not in ("0", "0.0", "")):
+    # ---- Prefill from Cost Planner / Household so optional fields aren’t empty ----
+s = st.session_state
+
+# 1) Detect VA (monthly > 0 anywhere we use it)
+va_detected = any([
+    s.get("a_va_monthly", 0),
+    s.get("b_va_monthly", 0),
+    s.get("va_monthly", 0),
+])
+
+# 2) Detect Long-term care insurance (be greedy with signals)
+ltc_detected = False
+# explicit booleans some drawers use
+for k in ("ltc_insurance", "has_ltc_insurance", "household_ltc", "ltc_policy"):
+    v = s.get(k, False)
+    if bool(v) and str(v).lower() not in ("false", "0", "", "none", "no"):
+        ltc_detected = True
+        break
+# any other key that looks like it
+if not ltc_detected:
+    for k, v in s.items():
+        if "ltc" in str(k).lower() and bool(v) and str(v).lower() not in ("false", "0", "", "none", "no"):
             ltc_detected = True
             break
-    if "pfma_va" not in st.session_state:
-        st.session_state.pfma_va = bool(va_detected)
-    if "pfma_ltc" not in st.session_state:
-        st.session_state.pfma_ltc = bool(ltc_detected)
+# PFMA payer itself can also imply LTC (if user chose it earlier)
+if not ltc_detected and s.get("pfma_payer") == "Long-term care insurance":
+    ltc_detected = True
 
-    # Merge chronic conditions selected in Cost Planner (AL/MC) to prefill optional
-    cond_sets = []
-    for p in st.session_state.get("people", []):
-        pid = p["id"]
-        al_c = st.session_state.get(f"al_conditions_{pid}")
-        mc_c = st.session_state.get(f"mc_conditions_{pid}")
-        if isinstance(al_c, list): cond_sets.extend(al_c)
-        if isinstance(mc_c, list): cond_sets.extend(mc_c)
-    if cond_sets and "pfma_conditions" not in st.session_state:
-        seen, merged = set(), []
-        for c in cond_sets:
-            if c not in seen:
-                seen.add(c); merged.append(c)
-        st.session_state.pfma_conditions = merged
+# only set defaults if user hasn’t toggled them yet
+if "pfma_va" not in s:
+    s.pfma_va = bool(va_detected)
+if "pfma_ltc" not in s:
+    s.pfma_ltc = bool(ltc_detected)
+
+# 3) Merge chronic conditions chosen in Cost Planner (AL/MC) across all people
+merged_conditions = []
+
+def _add_unique(seq, items):
+    seen = set(seq)
+    for it in items:
+        if it and it not in seen:
+            seq.append(it); seen.add(it)
+
+# preferred source: new multiselects we saved per person
+for p in s.get("people", []):
+    pid = p["id"]
+    for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
+        vals = s.get(key)
+        if isinstance(vals, list) and vals:
+            _add_unique(merged_conditions, vals)
+
+# fallback: legacy single-value engine inputs, map to a concrete condition when possible
+for p in s.get("people", []):
+    pid = p["id"]
+    for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic"):
+        val = s.get(key)
+        if val in ("Diabetes", "Parkinson's"):
+            _add_unique(merged_conditions, [val])
+        # "Complex" doesn’t map to a specific condition list; skip it
+
+# only prefill if user hasn’t already interacted with PFMA conditions
+if merged_conditions and not s.get("pfma_conditions"):
+    s.pfma_conditions = merged_conditions
 
     # ---------- BOOKING FIRST ----------
     st.subheader("Get Connected to Expert Advice")
