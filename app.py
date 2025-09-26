@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 import traceback
 import streamlit as st
 
@@ -83,7 +82,7 @@ def render_pfma():
     recs = s.get("planner_results", {})
     overrides = s.get("care_overrides", {})
 
-    # ---- Summary at the top ----
+    # Summaries
     with st.expander("Your current plan summary", expanded=True):
         if people and recs:
             nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
@@ -99,6 +98,37 @@ def render_pfma():
             st.write(f"**Estimated current monthly care total:** {money(total)}")
         else:
             st.info("No Cost Planner data yet.")
+
+    # Infer defaults from calculator/household so optional checkboxes prefill
+    va_detected = any([
+        st.session_state.get("a_va_monthly", 0),
+        st.session_state.get("b_va_monthly", 0),
+        st.session_state.get("va_monthly", 0),
+    ])
+    ltc_detected = False
+    for k, v in st.session_state.items():
+        if "ltc" in str(k).lower() and (bool(v) and str(v) not in ("0", "0.0", "")):
+            ltc_detected = True
+            break
+    if "pfma_va" not in st.session_state:
+        st.session_state.pfma_va = bool(va_detected)
+    if "pfma_ltc" not in st.session_state:
+        st.session_state.pfma_ltc = bool(ltc_detected)
+
+    # Merge chronic conditions selected in Cost Planner (AL/MC) to prefill optional
+    cond_sets = []
+    for p in st.session_state.get("people", []):
+        pid = p["id"]
+        al_c = st.session_state.get(f"al_conditions_{pid}")
+        mc_c = st.session_state.get(f"mc_conditions_{pid}")
+        if isinstance(al_c, list): cond_sets.extend(al_c)
+        if isinstance(mc_c, list): cond_sets.extend(mc_c)
+    if cond_sets and "pfma_conditions" not in st.session_state:
+        seen, merged = set(), []
+        for c in cond_sets:
+            if c not in seen:
+                seen.add(c); merged.append(c)
+        st.session_state.pfma_conditions = merged
 
     # ---------- BOOKING FIRST ----------
     st.subheader("Get Connected to Expert Advice")
@@ -204,6 +234,7 @@ def render_pfma():
                     "Depression / anxiety","Other",
                 ],
                 key="pfma_conditions",
+                default=st.session_state.get("pfma_conditions", []),
             )
             st.multiselect(
                 "Activities that need support (ADLs/IADLs)",
@@ -264,9 +295,9 @@ def render_pfma():
 
     # Group 4: Benefits & coverage
     with st.expander("Benefits & coverage"):
-        st.checkbox("Long-term care insurance", key="pfma_ltc", value=False)
-        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=False)
-        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=False)
+        st.checkbox("Long-term care insurance", key="pfma_ltc", value=st.session_state.get("pfma_ltc", False))
+        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=st.session_state.get("pfma_va", False))
+        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=st.session_state.get("pfma_medicaid", False))
         st.text_input("Other coverage or notes (optional)", key="pfma_coverage_notes")
 
     st.divider()
@@ -319,7 +350,6 @@ if "step" not in st.session_state:
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all, key="start_over_btn")
-# In-file navigation to PFMA
 if st.sidebar.button("Schedule with an Advisor", use_container_width=True, key="pfma_sidebar"):
     st.session_state.step = "pfma"; st.rerun()
 
@@ -518,9 +548,13 @@ elif st.session_state.step == "breakdown":
         cost = int(person_costs.get(pid, 0))
         def pick(base): return s.get(f"{base}_{pid}") or s.get(base) or "—"
         if scenario == "assisted_living":
-            detail = ", ".join([f"Care: {pick('al_care_level')}", f"Room: {pick('al_room_type')}", f"Mobility: {pick('al_mobility')}", f"Conditions: {pick('al_conditions')}"])
+            cond = s.get(f"al_conditions_{pid}", s.get("al_conditions"))
+            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
+            detail = ", ".join([f"Care: {pick('al_care_level')}", f"Room: {pick('al_room_type')}", f"Mobility: {pick('al_mobility')}", f"Conditions: {cond_str}"])
         elif scenario == "memory_care":
-            detail = ", ".join([f"Care: {pick('mc_care_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {pick('mc_conditions')}"])
+            cond = s.get(f"mc_conditions_{pid}", s.get("mc_conditions"))
+            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
+            detail = ", ".join([f"Care: {pick('mc_care_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
         elif scenario == "in_home":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
             ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
