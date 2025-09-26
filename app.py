@@ -464,9 +464,7 @@ elif st.session_state.step == "recommendations":
         care_type = rec.care_type; reasons = rec.reasons; narrative = rec.narrative
         nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
         st.subheader(f"{name}: {nice.get(care_type, care_type).title()} (recommended)")
-        for r in reasons or []: st.write("• " + str(r))
-        if narrative: st.info(narrative)
-        options = ["none","in_home","assisted_living","memory_care"]
+
         idx = options.index(care_type) if care_type in options else 1
         label = st.selectbox(f"Care scenario for {name}", [nice[o] for o in options], index=idx, key=f"override_{pid}")
         reverse = {v:k for k,v in nice.items()}
