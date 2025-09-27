@@ -626,7 +626,7 @@ elif st.session_state.step == "breakdown":
     cta1, cta2 = st.columns(2)
     with cta1:
         if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
-    with c2:
+    with cta2:
         if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "pfma":
     render_pfma()
