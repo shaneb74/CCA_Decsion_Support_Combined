@@ -294,4 +294,3 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
     return combined
-```
