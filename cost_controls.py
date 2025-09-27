@@ -1,4 +1,5 @@
-# cost_controls.py — single location control + per-scenario cost panels
+
+# cost_controls.py — single location control + per-scenario cost panels (safe session writes)
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ LOCATION_FACTORS = {
     "Florida": 1.05,
 }
 
-# Chronic condition options (shared across app + PFMA)
+# Chronic condition options (shared)
 CONDITION_OPTIONS: List[str] = [
     "Dementia / memory loss",
     "Parkinson's",
@@ -42,13 +43,14 @@ def _derive_chronic_for_engine(selected: List[str]) -> str:
 
 def render_location_control() -> None:
     """One global location control for the whole Cost Planner step."""
-    current = st.session_state.get("cost_location", "National")
-    options = list(LOCATION_FACTORS.keys())
-    try:
-        idx = options.index(current)
-    except Exception:
-        idx = 0
-    choice = st.selectbox("Location", options, index=idx, key="cost_location_select")
+    choice = st.selectbox(
+        "Location",
+        list(LOCATION_FACTORS.keys()),
+        index=list(LOCATION_FACTORS.keys()).index(
+            st.session_state.get("cost_location", "National")
+        ) if "cost_location" in st.session_state else 0,
+        key="cost_location_select",
+    )
     # Persist normalized fields
     st.session_state.cost_location = choice
     st.session_state.location_factor = float(LOCATION_FACTORS.get(choice, 1.0))
@@ -84,18 +86,26 @@ def _inputs_namespace(**kwargs) -> SimpleNamespace:
         setattr(ns, k, v)
     return ns
 
-# ---- cross-page persistence for chronic conditions ----
-def _record_conditions(pid: str, conditions: List[str], kind: str) -> None:
-    """Persist per-person conditions and maintain a canonical set for PFMA defaults."""
-    # Save per-person under e.g. 'al_conditions_A'
-    key = f"{kind}_conditions_{pid}"
-    st.session_state[key] = list(conditions) if conditions else []
-    # Maintain a global canonical list while user interacts (for quick PFMA defaults)
-    canon = list(st.session_state.get("canon_conditions", []) or [])
-    for c in conditions or []:
-        if c and c in CONDITION_OPTIONS and c not in canon:
-            canon.append(c)
-    st.session_state["canon_conditions"] = canon
+def _union_into_canon(selected: List[str]) -> None:
+    """Update a canonical union of conditions across panels, without touching widget keys."""
+    try:
+        current = list(st.session_state.get("canon_conditions", []))
+    except Exception:
+        current = []
+    # sanitize to known options
+    valid = set(CONDITION_OPTIONS)
+    for item in selected or []:
+        if item in valid and item not in current:
+            current.append(item)
+    st.session_state["canon_conditions"] = current
+
+def _record_personal_copy(pid: str, selected: List[str], kind: str) -> None:
+    """
+    Store the per-person list without mutating the widget key directly.
+    We avoid writing to the widget's key (e.g., 'al_conditions_{pid}') to comply with Streamlit rules.
+    """
+    store_key = f"{kind}_conditions_saved_{pid}"  # e.g., al_conditions_saved_A
+    st.session_state[store_key] = list(selected) if selected else []
 
 def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
@@ -118,7 +128,9 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_al_mobility",
         )
-        default_conditions = st.session_state.get(f"al_conditions_{pid}")
+        # multiselect chronic conditions (widget key is al_conditions_{pid})
+        # default comes from saved copy or legacy seed
+        default_conditions = st.session_state.get(f"al_conditions_saved_{pid}")
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
         al_conditions = st.multiselect(
@@ -127,10 +139,13 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             default=default_conditions,
             key=f"al_conditions_{pid}",
         )
-        _record_conditions(pid, al_conditions, "al")
-        # Derive the engine-friendly single value
+        # Derived single-value for engine
         al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
         st.session_state[f"{pid}_al_chronic"] = al_chronic_for_engine
+
+        # Persist without touching the widget key
+        _record_personal_copy(pid, al_conditions, "al")
+        _union_into_canon(al_conditions)
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -140,7 +155,7 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
         al_care_level=st.session_state[f"{pid}_al_care_level"],
         al_room_type=st.session_state[f"{pid}_al_room_type"],
         al_mobility=st.session_state[f"{pid}_al_mobility"],
-        al_chronic=st.session_state[f"{pid}_al_chronic"],  # single value for engine
+        al_chronic=st.session_state[f"{pid}_al_chronic"],
     )
     return int(calc.monthly_cost(inputs))
 
@@ -170,16 +185,15 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_ih_mobility",
         )
-    # Keep in-home chronic as single-select for engine stability, but still feed PFMA canon
     chronic = st.selectbox(
-        f"{name} • Chronic condition (summary)",
+        f"{name} • Chronic condition",
         ["None", "Diabetes", "Parkinson's", "Complex"],
         index=["None", "Diabetes", "Parkinson's", "Complex"].index(seeds["chronic_single"]),
         key=f"{pid}_ih_chronic",
     )
-    # Feed canon from single select if it maps
+    # If this single-select is Diabetes/Parkinson's, fold into canon
     if chronic in ("Diabetes", "Parkinson's"):
-        _record_conditions(pid, [chronic], "ih")
+        _union_into_canon([chronic])
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -209,7 +223,7 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_mc_mobility",
         )
     with c2:
-        default_conditions = st.session_state.get(f"mc_conditions_{pid}")
+        default_conditions = st.session_state.get(f"mc_conditions_saved_{pid}")
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
         mc_conditions = st.multiselect(
@@ -218,9 +232,11 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             default=default_conditions,
             key=f"mc_conditions_{pid}",
         )
-        _record_conditions(pid, mc_conditions, "mc")
         mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
         st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
+
+        _record_personal_copy(pid, mc_conditions, "mc")
+        _union_into_canon(mc_conditions)
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
@@ -229,7 +245,7 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
         location_factor=lf,
         mc_level=st.session_state[f"{pid}_mc_level"],
         mc_mobility=st.session_state[f"{pid}_mc_mobility"],
-        mc_chronic=st.session_state[f"{pid}_mc_chronic"],  # single value for engine
+        mc_chronic=st.session_state[f"{pid}_mc_chronic"],
     )
     return int(calc.monthly_cost(inputs))
 
