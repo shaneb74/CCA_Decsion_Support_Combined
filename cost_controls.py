@@ -255,7 +255,7 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             CONDITION_OPTIONS,
             default=default_conditions,
             format_func=format_condition_label,  # Shorten chips
-            key=f"{pid}_mc_conditions",  # Unique key for stability
+            key=f"mc_conditions_{pid}",  # Unique key for stability
             max_selections=5,  # Limit selections to reduce rendering issues
         )
         mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
