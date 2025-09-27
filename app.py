@@ -1,28 +1,27 @@
-
-# app.py — Senior Navigator (single-file: Planner → Recommendations → Cost Planner → Household → Breakdown → PFMA)
+# app.py — Senior Navigator (single-file: Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
 from pathlib import Path
+from typing import List, Dict, Any
 import traceback
-from types import SimpleNamespace
-from typing import List
 import streamlit as st
 
-# External cost UI helpers
+# ----------------------- External helpers -----------------------
 from cost_controls import (
     render_location_control,
     render_costs_for_active_recommendations,
-    CONDITION_OPTIONS,
+    CONDITION_OPTIONS,          # shared list, keep PFMA aligned
 )
 
+# ----------------------- Page config -----------------------
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
 
-# ----------------------- Paths (root) ----------------------
+# ----------------------- Paths -----------------------
 ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
-# ----------------------- Engines ---------------------------
+# ----------------------- Engines -----------------------
 try:
     from engines import PlannerEngine, CalculatorEngine, PlannerResult
 except Exception:
@@ -30,13 +29,13 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-# isolate drawers (optional)
+# Household drawers optional (keep your existing asset_engine.py as-is)
 try:
     import asset_engine
 except Exception:
     asset_engine = None
 
-# ----------------------- Utilities -------------------------
+# ----------------------- Utilities -----------------------
 def reset_all():
     for k in list(st.session_state.keys()):
         if not k.startswith("_"):
@@ -51,7 +50,6 @@ def _is_intlike(x) -> bool:
 
 def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
     if not isinstance(amap, dict) or not amap:
-        st.error(f"Invalid or empty answer map: {amap}")
         return [], []
     keys = list(amap.keys())
     if not all(isinstance(k, str) for k in keys): return [], []
@@ -64,11 +62,9 @@ def order_answer_map(amap: dict[str, str]) -> tuple[list[str], list[str]]:
     return ordered_keys, labels
 
 def radio_from_answer_map(label, amap, *, key, default_key=None) -> str | None:
-    if not isinstance(amap, dict) or not amap:
-        st.warning(f"Skipping radio for '{label}' due to invalid answer map"); return default_key
     keys, labels = order_answer_map(amap)
     if not labels:
-        st.warning(f"No options for '{label}', using default"); return default_key
+        return default_key
     idx = keys.index(str(default_key)) if default_key is not None and str(default_key) in keys else 0
     sel_label = st.radio(label, labels, index=idx, key=key)
     return keys[labels.index(sel_label)]
@@ -77,15 +73,56 @@ def money(n: int | float) -> str:
     try: return f"${int(round(float(n))):,}"
     except Exception: return "$0"
 
-def _sanitize_conditions(default_list):
-    opts = set(CONDITION_OPTIONS)
-    out, seen = [], set()
-    for v in (default_list or []):
-        if isinstance(v, str) and v in opts and v not in seen:
-            out.append(v); seen.add(v)
-    return out
+# ----------------------- Robust option matching -----------------------
+def _canon(s: str) -> str:
+    # normalize apostrophes and whitespace for stable comparisons
+    return (s or "").strip().replace("’", "'").lower()
 
-# ----------------------- PFMA (inline page) ----------------
+def _merge_conditions_from_cost_planner() -> List[str]:
+    """Collect any chronic conditions set in Cost Planner for AL/MC, normalize to CONDITION_OPTIONS labels."""
+    s = st.session_state
+    found: List[str] = []
+    canon_map = {_canon(opt): opt for opt in CONDITION_OPTIONS}
+    for p in s.get("people", []):
+        pid = p.get("id")
+        for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
+            vals = s.get(key)
+            if isinstance(vals, list):
+                for v in vals:
+                    c = _canon(v)
+                    if c in canon_map and canon_map[c] not in found:
+                        found.append(canon_map[c])
+    # graceful legacy fallback for older single-value seeds
+    for p in s.get("people", []):
+        pid = p.get("id")
+        for key in (f"{pid}_al_chronic", f"{pid}_mc_chronic"):
+            v = s.get(key)
+            if v in ("Diabetes", "Parkinson's"):
+                label = "Diabetes" if v == "Diabetes" else "Parkinson's"
+                # align to full list item if present (Diabetes maps directly; Parkinson's too)
+                # list contains "Parkinson's" and "Diabetes"
+                if label in CONDITION_OPTIONS and label not in found:
+                    found.append(label)
+    return found
+
+def _detect_va_ltc_defaults() -> tuple[bool, bool]:
+    """Detect VA and LTC from various session keys without being brittle."""
+    s = st.session_state
+    va_any = any(int(s.get(k, 0) or 0) > 0 for k in ("a_va_monthly", "b_va_monthly", "va_monthly"))
+    # LTC signals: direct radios, or computed add-ons if your calc added them
+    ltc_any = False
+    for k in ("a_ltc", "b_ltc", "ltc_flag", "household_ltc"):
+        v = s.get(k)
+        if isinstance(v, str) and v.lower() in ("yes", "true", "1"):
+            ltc_any = True; break
+        if isinstance(v, bool) and v:
+            ltc_any = True; break
+    if not ltc_any:
+        if any(int(s.get(k, 0) or 0) > 0 for k in ("ltc_add_A", "ltc_add_B", "ltc_add", "ltc_monthly")):
+            ltc_any = True
+    return bool(va_any), bool(ltc_any)
+
+# ----------------------- PFMA (inline page) -----------------------
 def render_pfma():
     st.header("Plan for My Advisor")
     st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
@@ -102,7 +139,7 @@ def render_pfma():
             for p in people:
                 pid, name = p["id"], p["display_name"]
                 rec = recs.get(pid)
-                scenario = overrides.get(pid, getattr(rec, "care_type", "in_home")) or "in_home"
+                scenario = overrides.get(pid, getattr(rec, "care_type", "in_home"))
                 st.write(f"**{name}:** {nice.get(scenario, scenario).title()}")
         else:
             st.info("No Guided Care Plan found. You can still book now.")
@@ -112,47 +149,7 @@ def render_pfma():
         else:
             st.info("No Cost Planner data yet.")
 
-    # Prefill VA / LTC booleans from session
-    va_detected = any([s.get("a_va_monthly", 0), s.get("b_va_monthly", 0), s.get("va_monthly", 0)])
-    ltc_detected = False
-    for k in ("a_ltc", "b_ltc"):
-        if s.get(k) == "Yes":
-            ltc_detected = True
-    for k in ("ltc_add_A","ltc_add_B"):
-        if int(s.get(k, 0)) > 0:
-            ltc_detected = True
-    if not ltc_detected:
-        for k, v in s.items():
-            if "ltc" in str(k).lower() and str(v).lower() in ("true","yes","1"):
-                ltc_detected = True; break
-    if not ltc_detected and s.get("pfma_payer") == "Long-term care insurance":
-        ltc_detected = True
-    if "pfma_va" not in s: s.pfma_va = bool(va_detected)
-    if "pfma_ltc" not in s: s.pfma_ltc = bool(ltc_detected)
-
-    # Seed PFMA conditions from canonical list produced by cost_controls
-    canonical = s.get("conditions_canonical", [])
-    # Fallback: merge per-person AL/MC lists if canonical missing
-    if not canonical and people:
-        merged = []
-        seen = set()
-        for p in people:
-            pid = p["id"]
-            for key in (f"al_conditions_{pid}", f"mc_conditions_{pid}"):
-                vals = s.get(key, [])
-                if isinstance(vals, list):
-                    for v in vals:
-                        if isinstance(v, str) and v in CONDITION_OPTIONS and v not in seen:
-                            seen.add(v); merged.append(v)
-        canonical = merged
-    # Initialize once if not set by user
-    if canonical and not s.get("pfma_conditions"):
-        s.pfma_conditions = _sanitize_conditions(canonical)
-
-    # ---------- BOOKING FIRST ----------
-    st.subheader("Get Connected to Expert Advice")
-
-    # prototype defaults (first time only)
+    # apply one-time defaults so the prototype is fill-free
     if "pfma_defaults_applied" not in s:
         s.pfma_name = "Taylor Morgan"
         s.pfma_phone = "(555) 201-8890"
@@ -166,6 +163,15 @@ def render_pfma():
         s.pfma_age_band = "65–74"
         s.pfma_booked = False
         s.pfma_defaults_applied = True
+
+    # prefill VA/LTC once
+    va_def, ltc_def = _detect_va_ltc_defaults()
+    if "pfma_va" not in s:
+        s.pfma_va = va_def
+    if "pfma_ltc" not in s:
+        s.pfma_ltc = ltc_def
+
+    st.subheader("Get Connected to Expert Advice")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -209,7 +215,8 @@ def render_pfma():
     colA, colB, colC = st.columns([1,1,1])
     with colA:
         if st.button("Back to Home", key="pfma_back_home", type="secondary"):
-            s.step = "intro"; st.rerun()
+            s.step = "intro"
+            st.rerun()
     with colB:
         if st.button("Book appointment", key="pfma_book_btn", type="primary"):
             s.pfma_booking = {
@@ -228,8 +235,7 @@ def render_pfma():
             st.success("Appointment request submitted. An advisor will reach out at your preferred time.")
             st.info("Add any optional details below to help your advisor prepare. Totally optional.")
     with colC:
-        if st.button("Finish", key="pfma_finish", type="secondary"):
-            s.step = "intro"; st.rerun()
+        st.button("Finish", key="pfma_finish", type="secondary", on_click=lambda: s.update(step="intro"))
 
     # ---------- OPTIONAL AFTER BOOKING ----------
     if not s.get("pfma_booked", False):
@@ -238,19 +244,38 @@ def render_pfma():
 
     st.divider()
     st.subheader("Optional details for your advisor")
+    st.caption("This helps your advisor prepare so your call focuses on solutions instead of data entry. \
+The more you share now, the faster and more personalized your recommendations will be.")
 
-    # ensure defaults are clean before rendering multiselect
-    s.pfma_conditions = _sanitize_conditions(s.get("pfma_conditions"))
+    # prefill chronic conditions from cost planner, only first time
+    if "pfma_prefill_done" not in s:
+        merged = _merge_conditions_from_cost_planner()
+        if merged and not s.get("pfma_conditions"):
+            s.pfma_conditions = merged
+        s.pfma_prefill_done = True
+
+    # --- Progress badges ---
+    def _badge(name: str, ok: bool):
+        col = "✅" if ok else "⬜️"
+        st.write(f"{col} {name}")
+
+    with st.expander("Progress & badges", expanded=False):
+        _badge("Booking complete", bool(s.get("pfma_booked")))
+        _badge("Care needs shared", bool(s.get("pfma_conditions") or s.get("pfma_adls")))
+        _badge("Preferences set", bool(s.get("pfma_settings")))
+        _badge("Logistics added", bool(s.get("pfma_living_situation") or s.get("pfma_radius")))
+        _badge("Benefits noted", bool(s.get("pfma_va") or s.get("pfma_ltc") or s.get("pfma_medicaid")))
 
     # Group 1: Care needs & daily support
-    with st.expander("Care needs & daily support", expanded=False):
+    with st.expander("Care needs & daily support"):
+        st.caption("Tell us about health conditions and daily support needs. Some communities provide higher levels of care; this helps us match appropriately.")
         col1, col2 = st.columns(2)
         with col1:
             st.multiselect(
                 "Chronic conditions (check all that apply)",
                 CONDITION_OPTIONS,
-                default=_sanitize_conditions(s.get("pfma_conditions")),
                 key="pfma_conditions",
+                default=st.session_state.get("pfma_conditions", []),
             )
             st.multiselect(
                 "Activities that need support (ADLs/IADLs)",
@@ -277,7 +302,8 @@ def render_pfma():
             )
 
     # Group 2: Care preferences
-    with st.expander("Care preferences", expanded=False):
+    with st.expander("Care preferences"):
+        st.caption("Different care settings offer different services and amenities. Your preferences help us personalize options.")
         st.multiselect(
             "Settings you’re open to",
             ["In-home care","Assisted Living","Memory Care","Not sure"],
@@ -291,7 +317,8 @@ def render_pfma():
         )
 
     # Group 3: Home & logistics
-    with st.expander("Home & logistics", expanded=False):
+    with st.expander("Home & logistics"):
+        st.caption("A quick snapshot of the current setup helps us make practical recommendations.")
         st.selectbox(
             "Current living situation",
             ["Own home","Rented home/apartment","With family","Independent Living","Assisted Living","Other"],
@@ -310,10 +337,11 @@ def render_pfma():
         st.checkbox("Has pets to consider", key="pfma_pets", value=False)
 
     # Group 4: Benefits & coverage
-    with st.expander("Benefits & coverage", expanded=False):
-        st.checkbox("Long-term care insurance", key="pfma_ltc", value=bool(s.get("pfma_ltc", False)))
-        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=bool(s.get("pfma_va", False)))
-        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=bool(s.get("pfma_medicaid", False)))
+    with st.expander("Benefits & coverage"):
+        st.caption("Sometimes existing plans cover services people don’t realize. Sharing this lets advisors hunt for coverage opportunities.")
+        st.checkbox("Long-term care insurance", key="pfma_ltc", value=st.session_state.get("pfma_ltc", False))
+        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=st.session_state.get("pfma_va", False))
+        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", value=st.session_state.get("pfma_medicaid", False))
         st.text_input("Other coverage or notes (optional)", key="pfma_coverage_notes")
 
     st.divider()
@@ -337,13 +365,38 @@ def render_pfma():
         }
         st.success("Optional details saved.")
 
-# ----------------------- Load JSONs ------------------------
+    # Share block — lightweight
+    st.divider()
+    st.subheader("Share these results")
+    st.caption("Send a quick summary to family or save it for later. Includes current plan, estimated costs and your booking preferences.")
+    # basic text export
+    import io
+    buf = io.StringIO()
+    buf.write("Senior Navigator — Summary\n\n")
+    if people and recs:
+        buf.write("Care plan:\n")
+        for p in people:
+            pid, name = p["id"], p["display_name"]
+            rec = recs.get(pid)
+            scenario = overrides.get(pid, getattr(rec, "care_type", "in_home"))
+            buf.write(f" - {name}: {scenario}\n")
+    if st.session_state.get("person_costs"):
+        total = sum(int(v) for v in st.session_state["person_costs"].values())
+        buf.write(f"\nEstimated monthly total: {money(total)}\n")
+    if s.get("pfma_booking"):
+        b = s["pfma_booking"]
+        buf.write("\nBooking:\n")
+        for k in ["name","relationship","phone","email","zip","age_band","when","best_time","notes","payer"]:
+            buf.write(f" - {k}: {b.get(k,'')}\n")
+    st.download_button("Download summary (.txt)", buf.getvalue(), file_name="senior_navigator_summary.txt")
+
+# ----------------------- Data files present? -----------------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
 if missing:
     st.error("Missing required JSON files:\n" + "\n".join(f"• {m.name}" for m in missing))
     st.stop()
 
-# ----------------------- Engines ---------------------------
+# ----------------------- Engines -----------------------
 try:
     planner = PlannerEngine(str(QA_PATH), str(REC_PATH))
 except Exception:
@@ -358,20 +411,18 @@ except Exception:
     st.code(traceback.format_exc())
     st.stop()
 
-# ----------------------- Session init ----------------------
+# ----------------------- Session init -----------------------
 if "step" not in st.session_state:
     st.session_state.step = "intro"
 
-# ----------------------- Sidebar ---------------------------
+# ----------------------- Sidebar -----------------------
 st.sidebar.title("Senior Navigator")
 st.sidebar.caption("Planner → Recommendations → Costs → Household")
 st.sidebar.button("Start over", on_click=reset_all, key="start_over_btn")
-
-# Easy entry to PFMA
 if st.sidebar.button("Schedule with an Advisor", use_container_width=True, key="pfma_sidebar"):
     st.session_state.step = "pfma"; st.rerun()
 
-# ----------------------- Steps -----------------------------
+# ----------------------- Flow -----------------------
 if st.session_state.step == "intro":
     st.title("Let’s take this one step at a time")
     st.markdown(
@@ -445,7 +496,7 @@ elif st.session_state.step == "planner":
     for q_idx, q in enumerate(planner.qa.get("questions", []), start=1):
         label = q["question"]; amap = q.get("answers", {})
         if not amap or not isinstance(amap, dict):
-            st.warning(f"Skipping question '{label}' due to invalid answers"); continue
+            continue
         key = f"q{q_idx}_{pid}"
         ans = radio_from_answer_map(label, amap, key=key)
         if ans is not None: answers[f"q{q_idx}"] = int(ans)
@@ -481,18 +532,18 @@ elif st.session_state.step == "recommendations":
     for p in s.get("people", []):
         pid = p["id"]; name = p["display_name"]
         rec = s.get("planner_results", {}).get(pid, PlannerResult("in_home", [], {}, [], "", None))
-        care_type = getattr(rec, "care_type", None) or "in_home"
-        reasons = getattr(rec, "reasons", []) or []
-        narrative = getattr(rec, "narrative", "") or ""
+        care_type = getattr(rec, "care_type", "in_home")
+        reasons = getattr(rec, "reasons", [])
+        narrative = getattr(rec, "narrative", "")
         nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
         st.subheader(f"{name}: {nice.get(care_type, care_type).title()} (recommended)")
-        for r in reasons: st.write("• " + str(r))
+        for r in reasons or []: st.write("• " + str(r))
         if narrative: st.info(narrative)
         options = ["none","in_home","assisted_living","memory_care"]
         idx = options.index(care_type) if care_type in options else 1
         label = st.selectbox(f"Care scenario for {name}", [nice[o] for o in options], index=idx, key=f"override_{pid}")
         reverse = {v:k for k,v in nice.items()}
-        s.care_overrides = s.get("care_overrides", {}); s.care_overrides[pid] = reverse[label]
+        s.care_overrides = s.get("care_overrides", {}); s.care_overrides[pid] = reverse.get(label, care_type)
         st.divider()
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -574,11 +625,10 @@ elif st.session_state.step == "breakdown":
         elif scenario == "memory_care":
             cond = s.get(f"mc_conditions_{pid}", s.get("mc_conditions"))
             cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
-            detail = ", ".join([f"Care: {pick('mc_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
+            detail = ", ".join([f"Care: {pick('mc_care_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
         elif scenario == "in_home":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
-            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency"))
-            ctype = str(ctype).title() if isinstance(ctype, str) else "Agency"
+            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
             detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
         else:
             detail = "—"
@@ -630,6 +680,13 @@ elif st.session_state.step == "breakdown":
     else:
         msg = "Estimated runway from assets: 0 months"
     st.subheader(msg)
+
+    with st.expander("Assets (for context)"):
+        st.table([
+            {"Assets":"Common assets (cash, investments, etc.)","Amount":money(assets_common)},
+            {"Assets":"Detailed assets (home sale, etc.)","Amount":money(assets_detail)},
+            {"Assets":"Total assets","Amount":money(assets_total)},
+        ])
 
     st.divider()
     cta1, cta2 = st.columns(2)
