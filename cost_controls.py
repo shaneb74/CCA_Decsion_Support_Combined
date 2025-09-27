@@ -1,4 +1,4 @@
-# cost_controls.py — single location control + per-scenario cost panels
+# cost_controls.py — single location control + per-scenario cost panels (with chronic multiselects)
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -14,7 +14,7 @@ LOCATION_FACTORS = {
     "Florida": 1.05,
 }
 
-# Chronic condition options (shared between Cost Planner and PFMA)
+# Chronic condition options (shared with app.py)
 CONDITION_OPTIONS: List[str] = [
     "Dementia / memory loss",
     "Parkinson's",
@@ -27,17 +27,27 @@ CONDITION_OPTIONS: List[str] = [
     "Other",
 ]
 
+def _canon(s: str) -> str:
+    if not isinstance(s, str):
+        return ""
+    return s.strip().lower().replace("’", "'")
+
 def _derive_chronic_for_engine(selected: List[str]) -> str:
     """
     Keep engine inputs stable: one of {"None","Diabetes","Parkinson's","Complex"}.
     - None => "None"
-    - Single selection that is Diabetes or Parkinson's => pass that exact label
+    - Single selection that is Diabetes or Parkinson's => that label
     - Anything else (multiple selections or other conditions) => "Complex"
     """
     if not selected:
         return "None"
-    if len(selected) == 1 and selected[0] in {"Diabetes", "Parkinson's"}:
-        return selected[0]
+    # Normalize for comparison
+    norm = [_canon(x) for x in selected]
+    if len(selected) == 1:
+        if _canon("Diabetes") in norm:
+            return "Diabetes"
+        if _canon("Parkinson's") in norm:
+            return "Parkinson's"
     return "Complex"
 
 def render_location_control() -> None:
@@ -71,7 +81,6 @@ def _prefill_from_flags(pid: str) -> Dict[str, Any]:
         if ("high_mobility_dependence" in flags)
         else ("Walker" if "moderate_mobility" in flags else "None")
     )
-    # Legacy single-value seed; used only to suggest a default selection for multiselect
     chronic_single = (
         "Complex"
         if ("complex_condition" in flags)
@@ -79,7 +88,7 @@ def _prefill_from_flags(pid: str) -> Dict[str, Any]:
     )
     return {"mobility": mobility, "chronic_single": chronic_single}
 
-def _ns(**kwargs) -> SimpleNamespace:
+def _inputs_namespace(**kwargs) -> SimpleNamespace:
     ns = SimpleNamespace()
     for k, v in kwargs.items():
         setattr(ns, k, v)
@@ -89,24 +98,23 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
     with c1:
-        st.selectbox(
+        care_level = st.selectbox(
             f"{name} • Care level",
             ["Light", "Moderate", "High"],
             key=f"{pid}_al_care_level",
         )
-        st.selectbox(
+        room_type = st.selectbox(
             f"{name} • Room type",
             ["Studio", "1 Bedroom", "2 Bedroom", "Shared"],
             key=f"{pid}_al_room_type",
         )
     with c2:
-        st.selectbox(
+        mobility = st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_al_mobility",
         )
-        # Multiselect chronic conditions (persist list for PFMA prefill)
         default_conditions = st.session_state.get(f"al_conditions_{pid}")
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
@@ -116,17 +124,18 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             default=default_conditions,
             key=f"al_conditions_{pid}",
         )
-        st.session_state[f"{pid}_al_chronic"] = _derive_chronic_for_engine(al_conditions)
+        al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
+        st.session_state[f"{pid}_al_chronic"] = al_chronic_for_engine
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
-    inputs = _ns(
+    inputs = _inputs_namespace(
         care_type="assisted_living",
         location_factor=lf,
         al_care_level=st.session_state[f"{pid}_al_care_level"],
         al_room_type=st.session_state[f"{pid}_al_room_type"],
         al_mobility=st.session_state[f"{pid}_al_mobility"],
-        al_chronic=st.session_state[f"{pid}_al_chronic"],  # single value for engine
+        al_chronic=st.session_state[f"{pid}_al_chronic"],
     )
     return int(calc.monthly_cost(inputs))
 
@@ -134,7 +143,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        st.slider(
+        hours = st.slider(
             f"{name} • Hours per day",
             min_value=1,
             max_value=24,
@@ -142,7 +151,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_ih_hours",
         )
     with c2:
-        st.slider(
+        days = st.slider(
             f"{name} • Days per month",
             min_value=1,
             max_value=31,
@@ -150,13 +159,13 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_ih_days",
         )
     with c3:
-        st.selectbox(
+        mobility = st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_ih_mobility",
         )
-    st.selectbox(
+    chronic = st.selectbox(
         f"{name} • Chronic condition",
         ["None", "Diabetes", "Parkinson's", "Complex"],
         index=["None", "Diabetes", "Parkinson's", "Complex"].index(seeds["chronic_single"]),
@@ -165,7 +174,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
-    inputs = _ns(
+    inputs = _inputs_namespace(
         care_type="in_home",
         location_factor=lf,
         ih_hours_per_day=st.session_state[f"{pid}_ih_hours"],
@@ -179,12 +188,12 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
     with c1:
-        st.selectbox(
+        level = st.selectbox(
             f"{name} • Memory care level",
             ["Standard", "High Acuity"],
             key=f"{pid}_mc_level",
         )
-        st.selectbox(
+        mobility = st.selectbox(
             f"{name} • Mobility",
             ["None", "Walker", "Wheelchair"],
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
@@ -200,16 +209,17 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             default=default_conditions,
             key=f"mc_conditions_{pid}",
         )
-        st.session_state[f"{pid}_mc_chronic"] = _derive_chronic_for_engine(mc_conditions)
+        mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
+        st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
 
     from engines import CalculatorEngine
     calc = CalculatorEngine()
-    inputs = _ns(
+    inputs = _inputs_namespace(
         care_type="memory_care",
         location_factor=lf,
         mc_level=st.session_state[f"{pid}_mc_level"],
         mc_mobility=st.session_state[f"{pid}_mc_mobility"],
-        mc_chronic=st.session_state[f"{pid}_mc_chronic"],  # single value for engine
+        mc_chronic=st.session_state[f"{pid}_mc_chronic"],
     )
     return int(calc.monthly_cost(inputs))
 
@@ -219,7 +229,8 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
     Returns combined total. Updates st.session_state.person_costs.
     Accepts and ignores extra kwargs like planner= to stay compatible with app.py.
     """
-    _init_person_costs()
+    if "person_costs" not in st.session_state:
+        st.session_state.person_costs = {}
     lf = float(st.session_state.get("location_factor", 1.0))
 
     people = st.session_state.get("people", [])
@@ -230,7 +241,7 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
         pid = p["id"]; name = p["display_name"]
         rec = planner_results.get(pid)
         recommended = getattr(rec, "care_type", "in_home") if rec else "in_home"
-        chosen = _get_override(pid, recommended)
+        chosen = st.session_state.get("care_overrides", {}).get(pid, recommended)
 
         st.subheader(f"{name} — Scenario: {chosen.replace('_',' ').title()}")
 
