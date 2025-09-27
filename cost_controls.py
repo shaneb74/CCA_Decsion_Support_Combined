@@ -1,4 +1,4 @@
-
+```python
 # cost_controls.py — single location control + per-scenario cost panels (safe session writes)
 from __future__ import annotations
 
@@ -107,6 +107,12 @@ def _record_personal_copy(pid: str, selected: List[str], kind: str) -> None:
     store_key = f"{kind}_conditions_saved_{pid}"  # e.g., al_conditions_saved_A
     st.session_state[store_key] = list(selected) if selected else []
 
+def format_condition_label(condition: str) -> str:
+    """Shorten labels for multiselect chips to prevent overflow."""
+    if " / " in condition:
+        return condition.split(" / ")[0]  # e.g., "Dementia / memory loss" -> "Dementia"
+    return condition[:15] + "..." if len(condition) > 15 else condition
+
 def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
     c1, c2 = st.columns(2)
@@ -130,13 +136,14 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
         )
         # multiselect chronic conditions (widget key is al_conditions_{pid})
         # default comes from saved copy or legacy seed
-        default_conditions = st.session_state.get(f"al_conditions_saved_{pid}")
+        default_conditions = st.session_state.get(f"al_conditions_saved_{pid}", [])
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
         al_conditions = st.multiselect(
             f"{name} • Chronic conditions",
             CONDITION_OPTIONS,
             default=default_conditions,
+            format_func=format_condition_label,  # Shorten chips to fix display bug
             key=f"al_conditions_{pid}",
         )
         # Derived single-value for engine
@@ -223,13 +230,14 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             key=f"{pid}_mc_mobility",
         )
     with c2:
-        default_conditions = st.session_state.get(f"mc_conditions_saved_{pid}")
+        default_conditions = st.session_state.get(f"mc_conditions_saved_{pid}", [])
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
         mc_conditions = st.multiselect(
             f"{name} • Chronic conditions",
             CONDITION_OPTIONS,
             default=default_conditions,
+            format_func=format_condition_label,  # Shorten chips to fix display bug
             key=f"mc_conditions_{pid}",
         )
         mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
@@ -287,3 +295,4 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
     return combined
+```
