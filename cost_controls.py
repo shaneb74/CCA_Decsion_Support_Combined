@@ -150,8 +150,6 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_al_mobility",
         )
-        # multiselect chronic conditions (widget key is al_conditions_{pid})
-        # default comes from saved copy or legacy seed
         default_conditions = st.session_state.get(f"al_conditions_saved_{pid}", [])
         if default_conditions is None:
             default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
@@ -159,18 +157,14 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             f"{name} • Chronic conditions",
             CONDITION_OPTIONS,
             default=default_conditions,
-            format_func=format_condition_label,  # Shorten chips
+            format_func=format_condition_label,
             key=f"al_conditions_{pid}",
-            max_selections=5,  # Limit selections to reduce rendering issues
+            max_selections=5,
         )
-        # Derived single-value for engine
         al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
         st.session_state[f"{pid}_al_chronic"] = al_chronic_for_engine
-
-        # Persist without touching the widget key
         _record_personal_copy(pid, al_conditions, "al")
         _union_into_canon(al_conditions)
-
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
@@ -215,10 +209,8 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
         index=["None", "Diabetes", "Parkinson's", "Complex"].index(seeds["chronic_single"]),
         key=f"{pid}_ih_chronic",
     )
-    # If this single-select is Diabetes/Parkinson's, fold into canon
     if chronic in ("Diabetes", "Parkinson's"):
         _union_into_canon([chronic])
-
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
@@ -233,7 +225,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
 
 def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
-    c1, c2 = st.columns([1, 1.5])  # Widen multiselect column
+    c1, c2 = st.columns([1, 1.5])
     with c1:
         level = st.selectbox(
             f"{name} • Memory care level",
@@ -254,17 +246,14 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             f"{name} • Chronic conditions",
             CONDITION_OPTIONS,
             default=default_conditions,
-            format_func=format_condition_label,  # Shorten chips
-            key=f"mc_conditions_{pid}",  # Unique key for stability
-            max_selections=5,  # Limit selections to reduce rendering issues
+            format_func=format_condition_label,
+            key=f"mc_conditions_{pid}",
+            max_selections=5,
         )
         mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
         st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
-
-        # Persist without touching the widget key
         _record_personal_copy(pid, mc_conditions, "mc")
         _union_into_canon(mc_conditions)
-
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
@@ -284,19 +273,15 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
     """
     _init_person_costs()
     lf = float(st.session_state.get("location_factor", 1.0))
-
     people = st.session_state.get("people", [])
     planner_results = st.session_state.get("planner_results", {})
-
     combined = 0
     for p in people:
         pid = p["id"]; name = p["display_name"]
         rec = planner_results.get(pid)
         recommended = getattr(rec, "care_type", "in_home") if rec else "in_home"
         chosen = _get_override(pid, recommended)
-
         st.subheader(f"{name} — Scenario: {chosen.replace('_',' ').title()}")
-
         if chosen == "assisted_living":
             monthly = _panel_assisted_living(pid, name, lf)
         elif chosen == "memory_care":
@@ -305,12 +290,10 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
             monthly = _panel_in_home(pid, name, lf)
         else:
             monthly = 0
-
         st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
         st.session_state.person_costs[pid] = int(monthly)
         combined += int(monthly)
         st.divider()
-
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
     return combined
