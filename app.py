@@ -355,8 +355,7 @@ def render_pfma():
             st.info("Complete sections to unlock badges and help your advisor!")
         # Completion reward
         if filled_count == len(optional_sections):
-            st.success("All sections complete! You've unlocked full preparation mode – expect a stellar consultation. 🎈")
-            st.balloons()
+            st.success("All sections complete! You've unlocked full preparation mode – expect a stellar consultation.")
 
 # ---------------- Data files present? ----------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
@@ -627,7 +626,7 @@ elif st.session_state.step == "breakdown":
     cta1, cta2 = st.columns(2)
     with cta1:
         if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
-    with cta2:
+    with c2:
         if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "pfma":
     render_pfma()
