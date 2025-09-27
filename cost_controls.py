@@ -112,9 +112,26 @@ def format_condition_label(condition: str) -> str:
         return condition.split(" / ")[0]  # e.g., "Dementia / memory loss" -> "Dementia"
     return condition[:15] + "..." if len(condition) > 15 else condition
 
+# CSS to improve multiselect chip rendering
+st.markdown("""
+    <style>
+    .stMultiSelect [role="option"] {
+        padding: 5px 10px;
+        margin: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .stMultiSelect div[role="listbox"] {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns([1, 1.5])  # Widen multiselect column
     with c1:
         care_level = st.selectbox(
             f"{name} • Care level",
@@ -142,8 +159,9 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
             f"{name} • Chronic conditions",
             CONDITION_OPTIONS,
             default=default_conditions,
-            format_func=format_condition_label,  # Shorten chips to fix display bug
+            format_func=format_condition_label,  # Shorten chips
             key=f"al_conditions_{pid}",
+            max_selections=5,  # Limit selections to reduce rendering issues
         )
         # Derived single-value for engine
         al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
@@ -215,7 +233,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
 
 def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     seeds = _prefill_from_flags(pid)
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns([1, 1.5])  # Widen multiselect column
     with c1:
         level = st.selectbox(
             f"{name} • Memory care level",
@@ -236,12 +254,14 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
             f"{name} • Chronic conditions",
             CONDITION_OPTIONS,
             default=default_conditions,
-            format_func=format_condition_label,  # Shorten chips to fix display bug
-            key=f"mc_conditions_{pid}",
+            format_func=format_condition_label,  # Shorten chips
+            key=f"{pid}_mc_conditions",  # Unique key for stability
+            max_selections=5,  # Limit selections to reduce rendering issues
         )
         mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
         st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
 
+        # Persist without touching the widget key
         _record_personal_copy(pid, mc_conditions, "mc")
         _union_into_canon(mc_conditions)
 
