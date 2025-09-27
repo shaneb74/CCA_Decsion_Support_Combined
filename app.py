@@ -244,6 +244,7 @@ def render_pfma():
                 CONDITION_OPTIONS,
                 key="pfma_conditions",
                 default=s.get("pfma_conditions", []),
+                on_change=lambda: st.rerun(),  # Ensure diabetes control renders
             )
             st.multiselect(
                 "Activities that need support (ADLs/IADLs)",
@@ -261,12 +262,19 @@ def render_pfma():
                     ["Oral meds", "Insulin", "Diet-controlled", "Other"],
                     key="pfma_diabetes_control",
                 )
+            st.checkbox("Requires constant supervision", key="pfma_supervision")
         with t2:
             st.selectbox("Vision issues", ["No","Yes"], key="pfma_vision")
             st.selectbox("Hearing issues", ["No","Yes"], key="pfma_hearing")
             st.selectbox("Weight-bearing status", ["Independent","Needs assistance","Non-weight-bearing"], key="pfma_weight")
             st.selectbox("Incontinence", ["Fully continent","Bladder","Bowel","Both"], key="pfma_incont")
             st.selectbox("Sleeping pattern (typical night)", ["Sleeps through","Up 1–2 times","Up 3–5 times","Frequent / hourly"], key="pfma_sleep")
+            st.multiselect(
+                "Mobility aids used",
+                ["Cane", "Walker", "Wheelchair", "Scooter", "None"],
+                key="pfma_mobility_aids",
+                default=s.get("pfma_mobility_aids", []),
+            )
     with st.expander("Care preferences"):
         st.multiselect(
             "Settings you’re open to",
@@ -287,6 +295,16 @@ def render_pfma():
             ],
             key="pfma_why",
         )
+        st.selectbox(
+            "Involvement of children in care decisions",
+            ["None", "Advisory", "Primary decision-makers", "Other"],
+            key="pfma_kids_preference",
+        )
+        st.selectbox(
+            "Preferred search radius for care facilities",
+            ["5 miles", "10 miles", "25 miles", "50 miles", "No preference"],
+            key="pfma_radius",
+        )
     with st.expander("Household & legal basics"):
         st.selectbox("Marital status", ["Single","Married","Widowed","Divorced","Partnered"], key="pfma_marital")
         st.selectbox("Smoking", ["No","Yes"], key="pfma_smoking")
@@ -294,6 +312,12 @@ def render_pfma():
         st.selectbox("POA / DPOA", ["None","POA","DPOA"], key="pfma_poa_type")
         if s.get("pfma_poa_type") in ("POA","DPOA"):
             st.text_input("POA/DPOA name", key="pfma_poa_name")
+        st.selectbox(
+            "Current living situation",
+            ["Own home", "Renting", "Living with family", "Assisted living", "Other"],
+            key="pfma_living_situation",
+        )
+        st.checkbox("Do you have pets?", key="pfma_pets", value=s.get("pfma_pets", False))
     with st.expander("Benefits & coverage"):
         st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False))
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False))
@@ -306,7 +330,7 @@ def render_pfma():
         s.pfma_optional = {
             "conditions": s.get("pfma_conditions", []),
             "adls": s.get("pfma_adls", []),
-            "supervision": s.get("pfma_supervision", []),
+            "supervision": s.get("pfma_supervision", False),
             "why_now": s.get("pfma_why"),
             "settings": s.get("pfma_settings", []),
             "open_multi": s.get("pfma_open_multi", True),
@@ -332,17 +356,18 @@ def render_pfma():
             "incontinence": s.get("pfma_incont"),
             "sleep": s.get("pfma_sleep"),
             "diabetes_control": s.get("pfma_diabetes_control"),
+            "kids_preference": s.get("pfma_kids_preference"),
         }
         st.success("Optional details saved.")
     if ENABLE_PFMA_GAMIFICATION:
         # Badges for completed sections
         st.subheader("Your Badges 🎉")
         badges = []
-        if st.session_state.get("pfma_conditions") or st.session_state.get("pfma_adls"):
+        if st.session_state.get("pfma_conditions") or st.session_state.get("pfma_adls") or st.session_state.get("pfma_supervision") or st.session_state.get("pfma_mobility_aids"):
             badges.append(("Care Needs Expert 🩺", "Awarded for sharing care needs and daily support!"))
-        if st.session_state.get("pfma_settings") or st.session_state.get("pfma_why"):
+        if st.session_state.get("pfma_settings") or st.session_state.get("pfma_why") or st.session_state.get("pfma_kids_preference") or st.session_state.get("pfma_radius"):
             badges.append(("Preferences Pro ⭐", "Thanks for detailing your care preferences – this helps your advisor!"))
-        if st.session_state.get("pfma_marital") or st.session_state.get("pfma_poa_type"):
+        if st.session_state.get("pfma_marital") or st.session_state.get("pfma_poa_type") or st.session_state.get("pfma_living_situation") or st.session_state.get("pfma_pets"):
             badges.append(("Household Hero 🏠", "Great job on household and legal basics!"))
         if st.session_state.get("pfma_ltc") or st.session_state.get("pfma_va"):
             badges.append(("Benefits Boss 💰", "Awesome – sharing benefits info ensures better advice."))
