@@ -1,4 +1,3 @@
-```python
 # cost_controls.py — single location control + per-scenario cost panels (safe session writes)
 from __future__ import annotations
 
