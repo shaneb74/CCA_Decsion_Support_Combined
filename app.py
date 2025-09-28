@@ -1,6 +1,7 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
+
 # ---- PFMA Tools Block (definitive) ----
 def _render_pfma_tools_block():
     # render-once guard
@@ -14,7 +15,7 @@ def _render_pfma_tools_block():
                 return default
             if isinstance(v, (int, float)):
                 return int(v)
-            s = str(v).replace("$","").replace(",","").strip()
+            s = str(v).replace("$", "").replace(",", "").strip()
             if s == "":
                 return default
             return int(float(s))
@@ -108,36 +109,31 @@ def _render_pfma_tools_block():
         def _row(lbl,val):
             return f"<tr><td>{lbl}</td><td>{_m(val)}</td></tr>"
 
-        html = [
+        html_parts = [
             '<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
-            '<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>'
-        ]
-        html.append('<h2>Financial Breakdown</h2>')
-        html.append('<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>')
-        html += [
+            '<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>',
+            '<h2>Financial Breakdown</h2>',
+            '<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>',
             _row("Individual A", inc_A), _row("Individual B", inc_B), _row("Household", inc_house),
             _row("VA — A", va_A), _row("VA — B", va_B), _row("Reverse mortgage (monthly)", rm_monthly),
-            f"<tr><th>Total</th><th>{_m(income_total)}</th></tr>", "</table>"
-        ]
-        html.append('<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>')
-        html += [
+            f"<tr><th>Total</th><th>{_m(income_total)}</th></tr>", "</table>",
+            '<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>',
             _row("Care", care_total), _row("Home", home_monthly), _row("Home modifications", mods_monthly),
-            _row("Other", other_monthly), f"<tr><th>Total</th><th>{_m(monthly_costs_total)}</th></tr>", "</table>"
-        ]
-        html.append('<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>')
-        html += [
+            _row("Other", other_monthly), f"<tr><th>Total</th><th>{_m(monthly_costs_total)}</th></tr>", "</table>",
+            '<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>',
             _row("Common", assets_common), _row("Less common", assets_detail), _row("Home sale net proceeds (applied)", sale_proceeds),
-            _row("Reverse mortgage lump (applied)", rm_lump), f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>",
+            _row("Reverse mortgage lump (applied)", rm_lump),
+            f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>",
             f"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>", "</table>"
         ]
         if gap > 0:
             ym = f"{years} years {rem} months" if years else f"{rem} months"
-            html.append(f"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>")
+            html_parts.append(f"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>")
         else:
-            html.append(f"<p><b>Monthly surplus:</b> {_m(-gap)}.</p>")
-        html.append("</body></html>")
-        st.download_button("Export Print View (HTML)", ("
-".join(html)).encode("utf-8"), "senior_navigator_export.html", "text/html", key="pfma_html_dl")
+            html_parts.append(f"<p><b>Monthly surplus:</b> {_m(-gap)}.</p>")
+        html_parts.append("</body></html>")
+        html_blob = "\n".join(html_parts)
+        st.download_button("Export Print View (HTML)", html_blob.encode("utf-8"), "senior_navigator_export.html", "text/html", key="pfma_html_dl")
         st.caption("Print-friendly; use your browser to save as PDF.")
         st.markdown("</div>", unsafe_allow_html=True)
 
