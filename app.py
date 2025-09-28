@@ -1,40 +1,20 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
-import streamlit as st
-
-# app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
-from __future__ import annotations
-import streamlit as st
 
 # ---- PFMA tools alias (non-recursive) ----
 # If the canonical renderer doesn't exist but the alt one does, create an alias.
 if "_render_pfma_tools_block" not in globals() and "_render_tools_pfma" in globals():
-    
     def _render_pfma_tools_block():
-    import streamlit as st
-    if st.session_state.get("_pfma_tools_rendered", False):
-        return
-    st.session_state["_pfma_tools_rendered"] = True
-
-    # … rest of your function logic …
-
-    if st.session_state.get("_pfma_tools_rendered", False):
-
-    # … rest of your function logic …
-
-    if st.session_state.get("_pfma_tools_rendered", False):
-        return
-    st.session_state["_pfma_tools_rendered"] = True
         try:
             return _render_tools_pfma()
         except Exception as _e:
             st.warning(f"Tools section unavailable: {_e}")
 
 
-# (removed old recursive PFMA shim)
+        # (removed old recursive PFMA shim)
 
 
-import json
+        import json
 import csv
 from io import StringIO
 
