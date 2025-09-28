@@ -1,33 +1,179 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
+# === Consolidated Tools Section (Export + AI handoff) ===
+def _build_export_payload():
+    s = st.session_state
+    t = compute_totals(s)
+    payload = {
+        "income": {
+            "individual_A": t.get("inc_A",0),
+            "individual_B": t.get("inc_B",0),
+            "household": t.get("inc_house",0),
+            "va_A": t.get("va_A",0),
+            "va_B": t.get("va_B",0),
+            "reverse_mortgage_monthly": t.get("rm_monthly",0),
+            "total": t.get("income_total",0),
+        },
+        "costs": {
+            "care": t.get("care_total",0),
+            "home": t.get("home_monthly",0),
+            "mods_monthly": t.get("mods_monthly",0),
+            "other": t.get("other_monthly",0),
+            "total": t.get("monthly_costs_total",0),
+        },
+        "assets": {
+            "common": t.get("assets_common",0),
+            "less_common": t.get("assets_detail",0),
+            "home_sale_proceeds_applied": t.get("sale_proceeds",0),
+            "reverse_mortgage_lump_applied": t.get("rm_lump",0),
+            "rm_fees_out_of_pocket": t.get("rm_fees_oop",0),
+            "mods_upfront_deducted": t.get("mods_upfront",0) if t.get("mods_deduct",False) else 0,
+            "total_effective": t.get("assets_total_effective",0),
+        },
+        "picture": {
+            "gap": t.get("gap",0),
+            "runway_years": t.get("years",0),
+            "runway_months_remainder": t.get("rem",0),
+            "runway_months": t.get("months_runway",0),
+        },
+        "meta": {
+            "home_decision": s.get("home_decision",""),
+            "rm_plan": s.get("rm_plan",""),
+        }
+    }
+    st.session_state["export_payload_derived"] = payload
+    return payload
 
-# --- AI Agent fallback button (defined early to avoid NameError) ---
-AI_HANDOFF_ENABLED = True if "AI_HANDOFF_ENABLED" not in globals() else AI_HANDOFF_ENABLED
-def _ai_agent_button_fallback():
+def _render_tools_section():
     try:
-        if not AI_HANDOFF_ENABLED:
+        if not (EXPORT_ENABLED or AI_HANDOFF_ENABLED):
             return
-        if st.button("Discuss this with my AI Agent (mock)", key="ai_handoff_breakdown_btn_fallback"):
-            def _to_int(v, default=0):
-                try: return int(v or 0)
-                except:
-                    try: return int(float(str(v).replace("$","").replace(",","")))
-                    except: return default
-            s = st.session_state
-            income_total = sum(_to_int(s.get(k)) for k in ["a_ss","a_pn","a_other","b_ss","b_pn","b_other","hh_rent","hh_annuity","hh_invest","hh_trust","hh_other","a_va_monthly","b_va_monthly","rm_monthly_income"])
-            costs_total = sum(_to_int(s.get(k)) for k in ["care_monthly_total","home_monthly_total","mods_monthly_total","other_monthly_total"])
-            gap = costs_total - income_total
-            st.success("Sent to AI Agent (mock).")
-            st.write(f"**Summary:** Income ${income_total:,} • Costs ${costs_total:,} • Gap ${gap:,}")
+        st.markdown("### Tools: export & AI handoff")
+        payload = _build_export_payload()
+        # --- Row 1: Exports ---
+        if EXPORT_ENABLED:
+            # CSV
+            csv_buf = StringIO()
+            import csv as _csv
+            w = _csv.writer(csv_buf)
+            w.writerow(["Section","Item","Amount"])
+            for k, v in payload["income"].items():
+                w.writerow(["Income", k, v])
+            for k, v in payload["costs"].items():
+                w.writerow(["Costs", k, v])
+            for k, v in payload["assets"].items():
+                w.writerow(["Assets", k, v])
+            w.writerow(["Picture","gap", payload["picture"]["gap"]])
+            w.writerow(["Picture","runway_months", payload["picture"]["runway_months"]])
+            csv_bytes = csv_buf.getvalue().encode("utf-8")
+
+            # Print view HTML
+            def _money(n):
+                try: return f"${int(n):,}"
+                except: return str(n)
+
+            inc, cst, ast, pic = payload["income"], payload["costs"], payload["assets"], payload["picture"]
+            html = ['<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
+                    '<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>']
+            html.append('<h2>Financial Breakdown</h2>')
+            html.append('<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>')
+            html += [f"<tr><td>Individual A</td><td>{_money(inc['individual_A'])}</td></tr>",
+                     f"<tr><td>Individual B</td><td>{_money(inc['individual_B'])}</td></tr>",
+                     f"<tr><td>Household</td><td>{_money(inc['household'])}</td></tr>",
+                     f"<tr><td>VA — A</td><td>{_money(inc['va_A'])}</td></tr>",
+                     f"<tr><td>VA — B</td><td>{_money(inc['va_B'])}</td></tr>",
+                     f"<tr><td>Reverse mortgage (monthly)</td><td>{_money(inc['reverse_mortgage_monthly'])}</td></tr>",
+                     f"<tr><th>Total</th><th>{_money(inc['total'])}</th></tr>",
+                     "</table>"]
+            html.append('<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>')
+            html += [f"<tr><td>Care</td><td>{_money(cst['care'])}</td></tr>",
+                     f"<tr><td>Home</td><td>{_money(cst['home'])}</td></tr>",
+                     f"<tr><td>Home modifications</td><td>{_money(cst['mods_monthly'])}</td></tr>",
+                     f"<tr><td>Other</td><td>{_money(cst['other'])}</td></tr>",
+                     f"<tr><th>Total</th><th>{_money(cst['total'])}</th></tr>",
+                     "</table>"]
+            html.append('<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>')
+            html += [f"<tr><td>Common</td><td>{_money(ast['common'])}</td></tr>",
+                     f"<tr><td>Less common</td><td>{_money(ast['less_common'])}</td></tr>",
+                     f"<tr><td>Home sale net proceeds (applied)</td><td>{_money(ast['home_sale_proceeds_applied'])}</td></tr>",
+                     f"<tr><td>Reverse mortgage lump (applied)</td><td>{_money(ast['reverse_mortgage_lump_applied'])}</td></tr>",
+                     f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_money(ast['rm_fees_out_of_pocket'])}</td></tr>",
+                     f"<tr><th>Assets Total (effective)</th><th>{_money(ast['total_effective'])}</th></tr>",
+                     "</table>"]
+            html.append("<h3>Your Financial Picture</h3>")
+            if pic["gap"] <= 0:
+                html.append(f"<p><b>Monthly surplus:</b> {_money(-pic['gap'])}</p>")
+            else:
+                ym = f"{pic['runway_years']} years {pic['runway_months_remainder']} months" if pic['runway_years'] > 0 else f"{pic['runway_months_remainder']} months"
+                html.append(f"<p><b>Monthly gap:</b> {_money(pic['gap'])}</p>")
+                html.append(f"<p><b>Estimated runway from assets:</b> {ym}</p>")
+            html.append("</body></html>")
+            html_bytes = "\n".join(html).encode("utf-8")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("Export CSV", data=csv_bytes, file_name="senior_navigator_export.csv", mime="text/csv", key="dl_csv_tools")
+            with col2:
+                st.download_button("Export Print View (HTML)", data=html_bytes, file_name="senior_navigator_export.html", mime="text/html", key="dl_html_tools")
+
+        # --- Row 2: AI Agent Handoff (mock) ---
+        if AI_HANDOFF_ENABLED:
+            st.markdown("#### Send to AI Agent (mock)")
+            preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers"], key="ai_prompt_preset")
+            if st.button("Send to AI Agent (mock)", key="ai_handoff_send_btn"):
+                # Show a chat-style preview; no external calls
+                t = compute_totals(st.session_state)
+                def _money2(n): 
+                    try: return f"${int(n):,}"
+                    except: return str(n)
+                opener = f"I see total monthly income {_money2(t.get('income_total',0))} and costs {_money2(t.get('monthly_costs_total',0))}. "
+                if t.get("gap",0) <= 0:
+                    opener += f"You have a monthly surplus of {_money2(-t.get('gap',0))}."
+                else:
+                    opener += f"You have a monthly gap of {_money2(t.get('gap',0))}."
+                st.markdown("**You:** " + preset)
+                st.markdown("**Agent:** " + opener + " I can help unpack tradeoffs and options based on your current inputs.")
+                st.caption("Mock only — no data is sent externally.")
     except Exception as e:
-        st.warning(f"AI handoff mock unavailable: {e}")
+        st.warning(f"Tools section unavailable: {e}")
+
+
+def _to_int(v, default=0):
+    try:
+        return int(v if v is not None and v != "" else default)
+    except Exception:
+        try:
+            return int(float(str(v).replace("$","").replace(",","")))
+        except Exception:
+            return default
+def compute_totals(s):
+    # Minimal shim if not present (prevents crashes)
+    return {
+        "inc_A": 0, "inc_B": 0, "inc_house": 0, "va_A": 0, "va_B": 0, "rm_monthly": 0,
+        "income_total": 0,
+        "care_total": 0, "home_monthly": 0, "mods_monthly": 0, "other_monthly": 0, "monthly_costs_total": 0,
+        "assets_common": 0, "assets_detail": 0, "sale_proceeds": 0, "rm_lump": 0, "rm_fees_oop": 0,
+        "mods_upfront": 0, "mods_deduct": False, "assets_total_effective": 0,
+        "gap": 0, "months_runway": 0, "years": 0, "rem": 0,
+    }
+
+
+# === Tools feature flags ===
+EXPORT_ENABLED = True if 'EXPORT_ENABLED' not in globals() else EXPORT_ENABLED
+AI_HANDOFF_ENABLED = True if 'AI_HANDOFF_ENABLED' not in globals() else AI_HANDOFF_ENABLED
+SNAPSHOTS_ENABLED = True if 'SNAPSHOTS_ENABLED' not in globals() else SNAPSHOTS_ENABLED
+SENSITIVITY_ENABLED = True if 'SENSITIVITY_ENABLED' not in globals() else SENSITIVITY_ENABLED
+
+
+from io import StringIO
+import csv
+
 
 import os
 from pathlib import Path
 import traceback
 import streamlit as st
-from io import StringIO
 
 from cost_controls import (
     render_location_control,
@@ -942,6 +1088,8 @@ elif st.session_state.step == "household":
         if st.button("Finish", key="hh_finish"):
             st.session_state.step = "intro"; st.rerun()
 elif st.session_state.step == "breakdown":
+    _render_tools_section()
+
     st.header("Detailed Breakdown")
     s = st.session_state
     people = s.get("people", [])
