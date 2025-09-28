@@ -1,12 +1,9 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-# ---- PFMA Tools (definitive, read-only, no external deps) ----
+# ---- PFMA Tools Block (definitive) ----
 def _render_pfma_tools_block():
-    import json, csv
-    from io import StringIO
-
-    # Render-once guard to prevent duplicate widgets / keys
+    # render-once guard
     if st.session_state.get("_pfma_tools_rendered", False):
         return
     st.session_state["_pfma_tools_rendered"] = True
@@ -18,7 +15,8 @@ def _render_pfma_tools_block():
             if isinstance(v, (int, float)):
                 return int(v)
             s = str(v).replace("$","").replace(",","").strip()
-            if s == "": return default
+            if s == "":
+                return default
             return int(float(s))
         except Exception:
             return default
@@ -29,8 +27,9 @@ def _render_pfma_tools_block():
                 return s.get(n)
         return default
 
-    # Compute totals locally from session_state (read-only)
     s = st.session_state
+
+    # Income
     inc_A = _to_int(_g(s,"inc_A")) or (_to_int(_g(s,"a_ss")) + _to_int(_g(s,"a_pn")) + _to_int(_g(s,"a_other")))
     inc_B = _to_int(_g(s,"inc_B")) or (_to_int(_g(s,"b_ss")) + _to_int(_g(s,"b_pn")) + _to_int(_g(s,"b_other")))
     inc_house = _to_int(_g(s,"inc_house")) or (_to_int(_g(s,"hh_rent")) + _to_int(_g(s,"hh_annuity")) + _to_int(_g(s,"hh_invest","hh_investments")) + _to_int(_g(s,"hh_trust")) + _to_int(_g(s,"hh_other")))
@@ -39,12 +38,14 @@ def _render_pfma_tools_block():
     rm_monthly = _to_int(_g(s,"rm_monthly","rm_monthly_income"))
     income_total = inc_A + inc_B + inc_house + va_A + va_B + rm_monthly
 
+    # Costs
     care_total = _to_int(_g(s,"care_total","care_monthly_total"))
     home_monthly = _to_int(_g(s,"home_monthly","home_monthly_total"))
     mods_monthly = _to_int(_g(s,"mods_monthly","mods_monthly_total"))
     other_monthly = _to_int(_g(s,"other_monthly","other_monthly_total"))
     monthly_costs_total = care_total + home_monthly + mods_monthly + other_monthly
 
+    # Assets
     assets_common = _to_int(_g(s,"assets_common","assets_common_total"))
     assets_detail = _to_int(_g(s,"assets_detail","assets_detailed_total","assets_less_common_total"))
     apply_sale = bool(_g(s,"apply_sale_to_assets","apply_home_proceeds","apply_net_proceeds","apply_home_sale_to_assets","apply_sale_net_to_assets","apply_home_sale"))
@@ -61,79 +62,117 @@ def _render_pfma_tools_block():
     rem = months_runway % 12
 
     def _m(n):
-        try: return f"${int(n):,}"
+        try:
+            return f"${int(n):,}"
         except Exception:
-            try: return f"${float(n):,.0f}"
-            except Exception: return str(n)
+            try:
+                return f"${float(n):,.0f}"
+            except Exception:
+                return str(n)
 
-    st.markdown(\"\"\"<style>
-    .pfma-card{border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafafa;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
-    .pfma-card h4{margin:4px 0 12px 0}
-    </style>\"\"\", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+        .pfma-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+            background: #fafafa;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+        }
+        .pfma-card h4 { margin: 4px 0 12px 0; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     colA, colB = st.columns(2)
 
+    # Exports
     with colA:
-        st.markdown(\"<div class='pfma-card'><h4>Exports</h4>\", unsafe_allow_html=True)
-        buf = StringIO(); w = csv.writer(buf)
-        w.writerow([\"Section\",\"Item\",\"Amount\"])
-        for k,v in {\"individual_A\":inc_A,\"individual_B\":inc_B,\"household\":inc_house,\"va_A\":va_A,\"va_B\":va_B,\"reverse_mortgage_monthly\":rm_monthly,\"total\":income_total}.items():
-            w.writerow([\"Income\",k,v])
-        for k,v in {\"care\":care_total,\"home\":home_monthly,\"mods_monthly\":mods_monthly,\"other\":other_monthly,\"total\":monthly_costs_total}.items():
-            w.writerow([\"Costs\",k,v])
-        for k,v in {\"common\":assets_common,\"less_common\":assets_detail,\"home_sale_proceeds_applied\":sale_proceeds,\"reverse_mortgage_lump_applied\":rm_lump,\"rm_fees_out_of_pocket\":rm_fees_oop,\"total_effective\":assets_total_effective}.items():
-            w.writerow([\"Assets\",k,v])
-        w.writerow([\"Picture\",\"gap\",gap]); w.writerow([\"Picture\",\"runway_months\",months_runway])
-        st.download_button(\"Export CSV\", buf.getvalue().encode(\"utf-8\"), \"senior_navigator_export.csv\", \"text/csv\", key=\"pfma_csv_dl\")
-        st.caption(\"CSV for spreadsheets.\")
-        def _row(lbl,val): return f\"<tr><td>{lbl}</td><td>{_m(val)}</td></tr>\"
-        html = ['<html><head><meta charset=\"utf-8\"><title>Senior Navigator Export</title>','<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>']
+        st.markdown("<div class='pfma-card'><h4>Exports</h4>", unsafe_allow_html=True)
+        buf = StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Section","Item","Amount"])
+        for k,v in {"individual_A":inc_A,"individual_B":inc_B,"household":inc_house,"va_A":va_A,"va_B":va_B,"reverse_mortgage_monthly":rm_monthly,"total":income_total}.items():
+            writer.writerow(["Income",k,v])
+        for k,v in {"care":care_total,"home":home_monthly,"mods_monthly":mods_monthly,"other":other_monthly,"total":monthly_costs_total}.items():
+            writer.writerow(["Costs",k,v])
+        for k,v in {"common":assets_common,"less_common":assets_detail,"home_sale_proceeds_applied":sale_proceeds,"reverse_mortgage_lump_applied":rm_lump,"rm_fees_out_of_pocket":rm_fees_oop,"total_effective":assets_total_effective}.items():
+            writer.writerow(["Assets",k,v])
+        writer.writerow(["Picture","gap",gap]); writer.writerow(["Picture","runway_months",months_runway])
+        st.download_button("Export CSV", buf.getvalue().encode("utf-8"), "senior_navigator_export.csv", "text/csv", key="pfma_csv_dl")
+        st.caption("CSV for spreadsheets.")
+
+        def _row(lbl,val):
+            return f"<tr><td>{lbl}</td><td>{_m(val)}</td></tr>"
+
+        html = [
+            '<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
+            '<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>'
+        ]
         html.append('<h2>Financial Breakdown</h2>')
         html.append('<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>')
-        html += [_row(\"Individual A\", inc_A), _row(\"Individual B\", inc_B), _row(\"Household\", inc_house), _row(\"VA — A\", va_A), _row(\"VA — B\", va_B), _row(\"Reverse mortgage (monthly)\", rm_monthly), f\"<tr><th>Total</th><th>{_m(income_total)}</th></tr>\", \"</table>\"]
+        html += [
+            _row("Individual A", inc_A), _row("Individual B", inc_B), _row("Household", inc_house),
+            _row("VA — A", va_A), _row("VA — B", va_B), _row("Reverse mortgage (monthly)", rm_monthly),
+            f"<tr><th>Total</th><th>{_m(income_total)}</th></tr>", "</table>"
+        ]
         html.append('<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>')
-        html += [_row(\"Care\", care_total), _row(\"Home\", home_monthly), _row(\"Home modifications\", mods_monthly), _row(\"Other\", other_monthly), f\"<tr><th>Total</th><th>{_m(monthly_costs_total)}</th></tr>\", \"</table>\"]
+        html += [
+            _row("Care", care_total), _row("Home", home_monthly), _row("Home modifications", mods_monthly),
+            _row("Other", other_monthly), f"<tr><th>Total</th><th>{_m(monthly_costs_total)}</th></tr>", "</table>"
+        ]
         html.append('<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>')
-        html += [_row(\"Common\", assets_common), _row(\"Less common\", assets_detail), _row(\"Home sale net proceeds (applied)\", sale_proceeds), _row(\"Reverse mortgage lump (applied)\", rm_lump), f\"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>\", f\"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>\", \"</table>\"]
+        html += [
+            _row("Common", assets_common), _row("Less common", assets_detail), _row("Home sale net proceeds (applied)", sale_proceeds),
+            _row("Reverse mortgage lump (applied)", rm_lump), f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>",
+            f"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>", "</table>"
+        ]
         if gap > 0:
-            ym = f\"{years} years {rem} months\" if years else f\"{rem} months\"
-            html.append(f\"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>\")
+            ym = f"{years} years {rem} months" if years else f"{rem} months"
+            html.append(f"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>")
         else:
-            html.append(f\"<p><b>Monthly surplus:</b> {_m(-gap)}.</p>\")
-        html.append(\"</body></html>\")
-        st.download_button(\"Export Print View (HTML)\", (\"\\n\".join(html)).encode(\"utf-8\"), \"senior_navigator_export.html\", \"text/html\", key=\"pfma_html_dl\")
-        st.caption(\"Print-friendly; use your browser to save as PDF.\")
-        st.markdown(\"</div>\", unsafe_allow_html=True)
+            html.append(f"<p><b>Monthly surplus:</b> {_m(-gap)}.</p>")
+        html.append("</body></html>")
+        st.download_button("Export Print View (HTML)", ("
+".join(html)).encode("utf-8"), "senior_navigator_export.html", "text/html", key="pfma_html_dl")
+        st.caption("Print-friendly; use your browser to save as PDF.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
+    # AI Agent
     with colB:
-        st.markdown(\"<div class='pfma-card'><h4>AI Agent handoff</h4>\", unsafe_allow_html=True)
-        preset = st.selectbox(\"Prompt preset\", [\"Close the funding gap\",\"Compare housing options\",\"Maximize benefits\",\"Explain my numbers\",\"Tune in-home care hours\"], key=\"pfma_preset_dd\")
+        st.markdown("<div class='pfma-card'><h4>AI Agent handoff</h4>", unsafe_allow_html=True)
+        preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers","Tune in-home care hours"], key="pfma_preset_dd")
         preview = {
-            \"goal\": preset,
-            \"context\": {
-                \"income_total\": income_total,
-                \"costs_total\": monthly_costs_total,
-                \"gap\": gap,
-                \"assets_total_effective\": assets_total_effective,
-                \"home_decision\": s.get(\"home_decision\",\"\"),
-                \"rm_plan\": s.get(\"rm_plan\",\"\"),
+            "goal": preset,
+            "context": {
+                "income_total": income_total,
+                "costs_total": monthly_costs_total,
+                "gap": gap,
+                "assets_total_effective": assets_total_effective,
+                "home_decision": s.get("home_decision",""),
+                "rm_plan": s.get("rm_plan",""),
             },
-            \"request\": \"Suggest 3 concrete options with pros/cons and a first step.\"
+            "request": "Suggest 3 concrete options with pros/cons and a first step."
         }
-        st.text_area(\"Prompt that would be sent\", value=json.dumps(preview, indent=2), height=200, key=\"pfma_prompt_ta\")
-        if st.button(\"Send to AI Agent (mock)\", key=\"pfma_send_btn\"):
-            opener = f\"I see total monthly income {_m(income_total)} and costs {_m(monthly_costs_total)}. \"
+        st.text_area("Prompt that would be sent", value=json.dumps(preview, indent=2), height=200, key="pfma_prompt_ta")
+        if st.button("Send to AI Agent (mock)", key="pfma_send_btn"):
+            opener = f"I see total monthly income {_m(income_total)} and costs {_m(monthly_costs_total)}. "
             if gap <= 0:
-                opener += f\"You have a monthly surplus of {_m(-gap)}.\"
+                opener += f"You have a monthly surplus of {_m(-gap)}."
             else:
                 if years or rem:
-                    opener += f\"You have a monthly gap of {_m(gap)}. Effective assets {_m(assets_total_effective)} cover about {years}y {rem}m at current spend.\"
+                    opener += f"You have a monthly gap of {_m(gap)}. Effective assets {_m(assets_total_effective)} cover about {years}y {rem}m at current spend."
                 else:
-                    opener += f\"You have a monthly gap of {_m(gap)}.\"
-            st.success(\"Mock handoff created.\")
-            st.write(\"**Agent:** \" + opener)
-        st.caption(\"Mock only — nothing leaves your browser.\")
-        st.markdown(\"</div>\", unsafe_allow_html=True)
+                    opener += f"You have a monthly gap of {_m(gap)}."
+            st.success("Mock handoff created.")
+            st.write("**Agent:** " + opener)
+        st.caption("Mock only — nothing leaves your browser.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# END PFMA Tools Block
 
 
 # ---- PFMA tools alias (non-recursive) ----
