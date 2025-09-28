@@ -1,143 +1,125 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-# --- PFMA Tools (minimal & safe) ---
-EXPORT_ENABLED = True if 'EXPORT_ENABLED' not in globals() else EXPORT_ENABLED
-AI_HANDOFF_ENABLED = True if 'AI_HANDOFF_ENABLED' not in globals() else AI_HANDOFF_ENABLED
-
-def _safe_money(n):
-    try: return f"${int(n):,}"
-    except Exception:
-        try: return f"${float(n):,.0f}"
-        except Exception: return str(n)
-
-def _payload_from_state():
-    # Prefer compute_totals if present
-    if 'compute_totals' in globals():
-        t = compute_totals(st.session_state)
-        inc = {
-            "individual_A": t.get("inc_A",0),
-            "individual_B": t.get("inc_B",0),
-            "household": t.get("inc_house",0),
-            "va_A": t.get("va_A",0),
-            "va_B": t.get("va_B",0),
-            "reverse_mortgage_monthly": t.get("rm_monthly",0),
-            "total": t.get("income_total",0),
-        }
-        cst = {
-            "care": t.get("care_total",0),
-            "home": t.get("home_monthly",0),
-            "mods_monthly": t.get("mods_monthly",0),
-            "other": t.get("other_monthly",0),
-            "total": t.get("monthly_costs_total",0),
-        }
-        ast = {
-            "common": t.get("assets_common",0),
-            "less_common": t.get("assets_detail",0),
-            "home_sale_proceeds_applied": t.get("sale_proceeds",0),
-            "reverse_mortgage_lump_applied": t.get("rm_lump",0),
-            "rm_fees_out_of_pocket": t.get("rm_fees_oop",0),
-            "mods_upfront_deducted": t.get("mods_upfront",0) if t.get("mods_deduct",False) else 0,
-            "total_effective": t.get("assets_total_effective",0),
-        }
-        pic = {
-            "gap": t.get("gap",0),
-            "runway_years": t.get("years",0),
-            "runway_months_remainder": t.get("rem",0),
-            "runway_months": t.get("months_runway",0),
-        }
-    else:
-        s = st.session_state
-        _int = lambda k: int(str(s.get(k,0)).replace(",","").replace("$","") or 0) if str(s.get(k,0)) != "" else 0
-        inc = {"individual_A":_int("a_ss")+_int("a_pn")+_int("a_other"),
-               "individual_B":_int("b_ss")+_int("b_pn")+_int("b_other"),
-               "household":_int("hh_rent")+_int("hh_annuity")+_int("hh_invest")+_int("hh_trust")+_int("hh_other"),
-               "va_A":_int("a_va_monthly"),
-               "va_B":_int("b_va_monthly"),
-               "reverse_mortgage_monthly":_int("rm_monthly_income"),}
-        inc["total"] = sum(inc.values())
-        cst = {"care":_int("care_monthly_total"),
-               "home":_int("home_monthly_total"),
-               "mods_monthly":_int("mods_monthly_total"),
-               "other":_int("other_monthly_total")}
-        cst["total"] = sum(cst.values())
-        ast = {"common":_int("assets_common_total"),
-               "less_common":_int("assets_detailed_total"),
-               "home_sale_proceeds_applied":_int("home_sale_net_proceeds"),
-               "reverse_mortgage_lump_applied":_int("rm_lump_applied"),
-               "rm_fees_out_of_pocket":_int("rm_fees_oop_total"),
-               "mods_upfront_deducted":_int("mods_upfront_total") if bool(s.get("mods_deduct_assets", False)) else 0}
-        ast["total_effective"] = ast["common"]+ast["less_common"]+ast["home_sale_proceeds_applied"]+ast["reverse_mortgage_lump_applied"]-ast["rm_fees_out_of_pocket"]-ast["mods_upfront_deducted"]
-        pic_gap = cst["total"] - inc["total"]
-        pic = {"gap": pic_gap,
-               "runway_months": (ast["total_effective"] // pic_gap) if (pic_gap>0 and ast["total_effective"]>0) else 0,
-               "runway_years":0,"runway_months_remainder":0}
-        if pic["runway_months"]>0:
-            pic["runway_years"] = pic["runway_months"]//12
-            pic["runway_months_remainder"] = pic["runway_months"]%12
-    meta = {"home_decision": st.session_state.get("home_decision",""),
-            "rm_plan": st.session_state.get("rm_plan","")}
-    return inc, cst, ast, pic, meta
-
-def _render_pfma_tools_block():
+def _pfma_css_cards():
     try:
-        if not (EXPORT_ENABLED or AI_HANDOFF_ENABLED):
-            return
-        inc, cst, ast, pic, meta = _payload_from_state()
-        colA, colB = st.columns(2)
-        with colA:
-            st.subheader("Exports")
-            # CSV
-            buf = StringIO()
-            w = csv.writer(buf)
-            w.writerow(["Section","Item","Amount"])
-            for k,v in inc.items(): w.writerow(["Income",k,v])
-            for k,v in cst.items(): w.writerow(["Costs",k,v])
-            for k,v in ast.items(): w.writerow(["Assets",k,v])
-            w.writerow(["Picture","gap", pic["gap"]])
-            w.writerow(["Picture","runway_months", pic["runway_months"]])
-            st.download_button("Export CSV", data=buf.getvalue().encode("utf-8"), file_name="senior_navigator_export.csv", mime="text/csv", key="pfma_csv")
-            st.caption("CSV for spreadsheets.")
-            # HTML
-            def row(k,v): return f"<tr><td>{k}</td><td>{_safe_money(v)}</td></tr>"
-            html = ['<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
-                    '<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>']
-            html.append('<h2>Financial Breakdown</h2>')
-            html.append('<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>')
-            html += [row("Individual A", inc["individual_A"]), row("Individual B", inc["individual_B"]), row("Household", inc["household"]), row("VA — A", inc["va_A"]), row("VA — B", inc["va_B"]), row("Reverse mortgage (monthly)", inc["reverse_mortgage_monthly"]), f"<tr><th>Total</th><th>{_safe_money(inc['total'])}</th></tr>", "</table>"]
-            html.append('<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>')
-            html += [row("Care", cst["care"]), row("Home", cst["home"]), row("Home modifications", cst["mods_monthly"]), row("Other", cst["other"]), f"<tr><th>Total</th><th>{_safe_money(cst['total'])}</th></tr>", "</table>"]
-            html.append('<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>')
-            html += [row("Common", ast["common"]), row("Less common", ast["less_common"]), row("Home sale net proceeds (applied)", ast["home_sale_proceeds_applied"]), row("Reverse mortgage lump (applied)", ast["reverse_mortgage_lump_applied"]), f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_safe_money(ast['rm_fees_out_of_pocket'])}</td></tr>", f"<tr><th>Assets Total (effective)</th><th>{_safe_money(ast['total_effective'])}</th></tr>", "</table>"]
-            html.append("</body></html>")
-            st.download_button("Export Print View (HTML)", data=("\n".join(html)).encode("utf-8"), file_name="senior_navigator_export.html", mime="text/html", key="pfma_html")
-            st.caption("Print-friendly; use your browser to save as PDF.")
-        with colB:
-            st.subheader("AI Agent handoff")
-            preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers","Tune in-home care hours"], key="pfma_preset")
-            preview = {"goal": preset, "context": {"income_total": inc["total"], "costs_total": cst["total"], "gap": pic["gap"], "assets_total_effective": ast["total_effective"], "home_decision": meta.get("home_decision",""), "rm_plan": meta.get("rm_plan","")}, "request": "Suggest 3 concrete options with pros/cons and a first step."}
-            st.text_area("Prompt that would be sent", value=json.dumps(preview, indent=2), height=180, key="pfma_prompt")
-            if st.button("Send to AI Agent (mock)", key="pfma_send"):
-                opener = f"I see total monthly income {_safe_money(inc['total'])} and costs {_safe_money(cst['total'])}. "
-                if pic["gap"] <= 0:
-                    opener += f"You have a monthly surplus of {_safe_money(-pic['gap'])}. We can explore quality upgrades, reserves, or pacing asset use."
-                else:
-                    # Compute simple runway text
-                    yrs = pic.get("runway_years",0)
-                    rem = pic.get("runway_months_remainder",0)
-                    if yrs or rem:
-                        opener += f"You have a monthly gap of {_safe_money(pic['gap'])}. Effective assets {_safe_money(ast['total_effective'])} cover about {yrs}y {rem}m at current burn."
-                    else:
-                        opener += f"You have a monthly gap of {_safe_money(pic['gap'])}."
-                st.success("Mock handoff created.")
-                st.write("**Agent:** " + opener)
-    except Exception as e:
-        st.warning(f"Tools section unavailable: {e}")
+        st.markdown(
+            """
+            <style>
+            .pfma-card{border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafafa;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
+            .pfma-card h4{margin:4px 0 12px 0}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+    except Exception:
+        pass
 
 
-import json
-import csv
-from io import StringIO
+# --- Canonical totals normalizer (read-only; preserves existing logic) ---
+def _to_int_safe(v, default=0):
+    try:
+        if v is None or v == "":
+            return default
+        if isinstance(v, (int, float)):
+            return int(v)
+        s = str(v).strip().replace("$","").replace(",","")
+        if s == "":
+            return default
+        return int(float(s))
+    except Exception:
+        return default
+
+def _get_any(s, keys, default=0):
+    for k in keys:
+        if k in s and s.get(k) not in (None, ""):
+            return s.get(k)
+    return default
+
+def _normalize_totals(state, base):
+    s = state
+    t = dict(base) if isinstance(base, dict) else {}
+
+    inc_A = _to_int_safe(t.get("inc_A", 0)) or (
+        _to_int_safe(_get_any(s, ["a_ss"], 0)) +
+        _to_int_safe(_get_any(s, ["a_pn"], 0)) +
+        _to_int_safe(_get_any(s, ["a_other"], 0))
+    )
+    inc_B = _to_int_safe(t.get("inc_B", 0)) or (
+        _to_int_safe(_get_any(s, ["b_ss"], 0)) +
+        _to_int_safe(_get_any(s, ["b_pn"], 0)) +
+        _to_int_safe(_get_any(s, ["b_other"], 0))
+    )
+    inc_house = _to_int_safe(t.get("inc_house", 0)) or (
+        _to_int_safe(_get_any(s, ["hh_rent"], 0)) +
+        _to_int_safe(_get_any(s, ["hh_annuity"], 0)) +
+        _to_int_safe(_get_any(s, ["hh_invest"], 0)) +
+        _to_int_safe(_get_any(s, ["hh_trust"], 0)) +
+        _to_int_safe(_get_any(s, ["hh_other"], 0))
+    )
+    va_A = _to_int_safe(t.get("va_A", 0) or _get_any(s, ["a_va_monthly"], 0))
+    va_B = _to_int_safe(t.get("va_B", 0) or _get_any(s, ["b_va_monthly"], 0))
+    rm_monthly = _to_int_safe(t.get("rm_monthly", 0) or _get_any(s, ["rm_monthly","rm_monthly_income"], 0))
+
+    care_total = _to_int_safe(t.get("care_total", 0) or _get_any(s, ["care_monthly_total"], 0))
+    home_monthly = _to_int_safe(t.get("home_monthly", 0) or _get_any(s, ["home_monthly_total"], 0))
+    mods_monthly = _to_int_safe(t.get("mods_monthly", 0) or _get_any(s, ["mods_monthly_total"], 0))
+    other_monthly = _to_int_safe(t.get("other_monthly", 0) or _get_any(s, ["other_monthly_total"], 0))
+
+    assets_common = _to_int_safe(t.get("assets_common", 0) or _get_any(s, ["assets_common_total"], 0))
+    assets_detail = _to_int_safe(t.get("assets_detail", 0) or _get_any(s, ["assets_detailed_total","assets_less_common_total"], 0))
+
+    apply_sale = bool(_get_any(s, ["apply_sale_to_assets","apply_home_proceeds","apply_net_proceeds","apply_home_sale_to_assets","apply_sale_net_to_assets","apply_home_sale"], 0))
+    sale_proceeds_raw = _to_int_safe(t.get("sale_proceeds", 0) or _get_any(s, ["sale_proceeds","home_sale_net_proceeds","sale_net"], 0))
+    sale_proceeds = sale_proceeds_raw if apply_sale or sale_proceeds_raw and t.get("sale_proceeds", None) else (t.get("sale_proceeds", 0) or 0)
+
+    rm_lump = _to_int_safe(t.get("rm_lump", 0) or _get_any(s, ["rm_lump","rm_lump_applied"], 0))
+    rm_fees_oop = _to_int_safe(t.get("rm_fees_oop", 0) or _get_any(s, ["rm_fees_oop","rm_fees_oop_total"], 0))
+
+    mods_upfront = _to_int_safe(t.get("mods_upfront", 0) or _get_any(s, ["mods_upfront_total"], 0))
+    mods_deduct = bool(t.get("mods_deduct", _get_any(s, ["mods_deduct_assets","mods_deduct"], 0)))
+
+    income_total = _to_int_safe(t.get("income_total", 0)) or (inc_A + inc_B + inc_house + va_A + va_B + rm_monthly)
+    monthly_costs_total = _to_int_safe(t.get("monthly_costs_total", 0)) or (care_total + home_monthly + mods_monthly + other_monthly)
+
+    assets_total_effective = _to_int_safe(t.get("assets_total_effective", 0))
+    if not assets_total_effective:
+        assets_total_effective = assets_common + assets_detail + sale_proceeds + rm_lump - rm_fees_oop - (mods_upfront if mods_deduct else 0)
+
+    gap = _to_int_safe(t.get("gap", monthly_costs_total - income_total))
+    months_runway = 0
+    years = 0
+    rem = 0
+    if gap > 0 and assets_total_effective > 0:
+        months_runway = int(assets_total_effective // gap)
+        years = months_runway // 12
+        rem = months_runway % 12
+
+    t.update({
+        "inc_A": inc_A, "inc_B": inc_B, "inc_house": inc_house,
+        "va_A": va_A, "va_B": va_B, "rm_monthly": rm_monthly,
+        "income_total": income_total,
+        "care_total": care_total, "home_monthly": home_monthly,
+        "mods_monthly": mods_monthly, "other_monthly": other_monthly,
+        "monthly_costs_total": monthly_costs_total,
+        "assets_common": assets_common, "assets_detail": assets_detail,
+        "sale_proceeds": sale_proceeds, "rm_lump": rm_lump,
+        "rm_fees_oop": rm_fees_oop, "mods_upfront": mods_upfront,
+        "mods_deduct": mods_deduct,
+        "assets_total_effective": assets_total_effective,
+        "gap": gap, "months_runway": months_runway,
+        "years": years, "rem": rem,
+    })
+    return t
+
+if "compute_totals" in globals():
+    _compute_totals_original = compute_totals
+    def compute_totals(state):
+        base = _compute_totals_original(state)
+        return _normalize_totals(state, base)
+else:
+    def compute_totals(state):
+        return _normalize_totals(state, {})
 
 
 import os
@@ -339,7 +321,6 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
 # ---------------- PFMA render ----------------
 def render_pfma():
     st.header("Plan for My Advisor")
-    _render_pfma_tools_block()
     st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
 
     s = st.session_state
