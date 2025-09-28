@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 import traceback
 import streamlit as st
-import pandas as pd
-from streamlit.components.v1 import html
 
 from cost_controls import (
     render_location_control,
@@ -19,7 +17,7 @@ ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lo
 
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="wide")
 
-# CSS for confirm buttons, gamification animations, and chart styling
+# CSS for confirm buttons and gamification animations
 st.markdown("""
     <style>
     .stButton > button[kind="primary"] {
@@ -666,7 +664,7 @@ def render_pfma():
             "diabetes_control": s.get("pfma_diabetes_control", {}),
             "mobility": s.get("pfma_mobility", {}),
             "symptoms": s.get("pfma_symptoms", {}),
-            "mental_health": s.get("pfma_mental_health", {}),
+            "mental_health": s.get("mental_health", {}),
             "dietary": s.get("pfma_dietary", {}),
             "cognition": s.get("pfma_cognition", {}),
             "vision": s.get("pfma_vision", {}),
@@ -786,7 +784,7 @@ elif st.session_state.step == "audience":
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
         rel = {"Myself":"self","My spouse/partner":"spouse","My parent":"parent","Someone else":"other"}[role]
-        people.append({"id":"A","display_name":n,"relationship":rel})
+        people.append({"id":"A","display_name":n,"relationship":"rel"})
     if st.button("Continue", key="aud_continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
@@ -908,7 +906,7 @@ elif st.session_state.step == "household":
         except Exception:
             st.error("Household drawers failed."); st.code(traceback.format_exc()); result = None
         if result is not None and hasattr(result, "as_dict"):
-            with st.expander("Details (for debugging)", expanded=False):
+            with st.expander("Details (for debugging", expanded=False):
                 st.json(result.as_dict())
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -973,7 +971,7 @@ elif st.session_state.step == "breakdown":
     }
     if any(amount > 0 for amount in monthly_costs_data["Amount"]):
         df = pd.DataFrame(monthly_costs_data)
-        st.bar_chart(df.set_index("Category")["Amount"], color="#4CAF50")
+        st.bar_chart(df.set_index("Category")["Amount"])
     else:
         st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
@@ -1035,7 +1033,10 @@ elif st.session_state.step == "breakdown":
     assets_detail = int(s.get("assets_detailed_total", 0))
     home_sale_proceeds = int(s.get("home_sale_net_proceeds", 0))
     mods_deduct = s.get("mods_deduct_assets", False)
-    assets_total = assets_common + assets_detail + (home_sale_proceeds if not mods_deduct else max(0, home_sale_proceeds - int(s.get("mods_upfront_total", 0))))
+    mods_upfront = int(s.get("mods_upfront_total", 0))
+    assets_total = assets_common + assets_detail + home_sale_proceeds - (mods_upfront if mods_deduct else 0)
+    if assets_total < 0:
+        assets_total = 0
     st.table([
         {"Category": "Common Assets", "Amount": money(assets_common)},
         {"Category": "Detailed Assets", "Amount": money(assets_detail)},
@@ -1092,14 +1093,12 @@ elif st.session_state.step == "breakdown":
     if gap > 0 and assets_total > 0:
         months = int(assets_total // max(gap, 1)); years = months // 12; rem = months % 12
         msg = f"Estimated runway from assets: {years} years, {rem} months" if years > 0 else f"Estimated runway from assets: {rem} months"
+    elif gap <= 0:
+        msg = "Estimated runway from assets: Indefinite (monthly surplus)"
     else:
         msg = "Estimated runway from assets: 0 months"
     st.subheader(msg)
     st.divider()
     cta1, cta2 = st.columns(2)
     with cta1:
-        if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
-    with cta2:
-        if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
-elif st.session_state.step == "pfma":
-    render_pfma()
+        if st.button("Back to Household", key="bd_back_house"): st.session_state.step
