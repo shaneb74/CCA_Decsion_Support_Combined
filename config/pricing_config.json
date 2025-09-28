@@ -1,0 +1,30 @@
+{
+  "location_factors": {
+    "National": 1.0,
+    "Washington": 1.15,
+    "California": 1.25,
+    "Texas": 0.95,
+    "Florida": 1.05
+  },
+  "assisted_living": {
+    "base": 5500,
+    "care_add": {
+      "Light": 0,
+      "Moderate": 900,
+      "High": 1800
+    }
+  },
+  "memory_care": {
+    "base": 6800,
+    "care_add": {
+      "Light": 0,
+      "Moderate": 1100,
+      "High": 2200
+    }
+  },
+  "in_home": {
+    "hourly": 38,
+    "hours_default": 40,
+    "agency_fee_pct": 0.1
+  }
+}
