@@ -4,6 +4,14 @@ from dataclasses import dataclass, asdict
 from typing import Dict, Any, List, Optional
 import streamlit as st
 
+# Canonical mapping for home decisions
+HOME_DECISION_MAP = {
+    "Keep": "KEEP",
+    "Sell": "SELL",
+    "HELOC": "HELOC",
+    "Reverse mortgage": "RM",
+}
+
 def _fmt(x: int | float) -> str:
     try:
         return f"${int(x):,}"
@@ -228,7 +236,7 @@ class IncomeAssetsEngine:
             home_monthly = 0
             sale_proceeds = 0
 
-            if decision == "Keep":
+            if decision_code == "KEEP":
                 c1, c2, c3 = st.columns(3)
                 with c1: mort = _money("Monthly mortgage/HELOC payment", "home_mort", 0)
                 with c2: tax  = _money("Monthly property taxes", "home_tax", 0)
@@ -239,7 +247,7 @@ class IncomeAssetsEngine:
                 home_monthly = mort + tax + ins + hoa + util
                 st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
 
-            elif decision == "Sell":
+            elif decision_code == "SELL":
                 c1, c2, c3 = st.columns(3)
                 with c1: sale = _money("Estimated sale price", "home_sale_price", 0, step=1000)
                 with c2: pay  = _money("Principal payoff at sale", "home_payoff", 0, step=1000)
@@ -251,7 +259,7 @@ class IncomeAssetsEngine:
                 st.metric("Estimated net proceeds", _fmt(sale_proceeds))
                 st.metric("Subtotal — Home monthly costs", _fmt(0))
 
-            elif decision == "HELOC":
+            elif decision_code == "HELOC":
                 c1, c2, c3 = st.columns(3)
                 with c1: heloc = _money("Monthly HELOC payment", "home_heloc", 0)
                 with c2: tax   = _money("Monthly property taxes", "home_tax", 0)
@@ -274,8 +282,6 @@ class IncomeAssetsEngine:
 
         # Persist for Breakdown consumers
         st.session_state["home_monthly_total"] = int(home_monthly)
-        st.session_state["rm_lump_applied"] = int(locals().get("rm_lump_applied", 0))
-        st.session_state["rm_fees_oop_total"] = int(locals().get("rm_fees_oop_total", 0))
         st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
         return int(home_monthly), int(sale_proceeds)
 

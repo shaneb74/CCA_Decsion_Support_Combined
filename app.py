@@ -1,60 +1,6 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-
-# --- Financial math helper (single source of truth) ---
-
-def _to_int(v, default=0):
-    try:
-        return int(v if v is not None and v != "" else default)
-    except Exception:
-        try:
-            return int(float(str(v).replace("$","").replace(",","")))
-        except Exception:
-            return default
-
-def compute_totals(s):
-    # Income
-    inc_A = _to_int(s.get("a_ss")) + _to_int(s.get("a_pn")) + _to_int(s.get("a_other"))
-    inc_B = _to_int(s.get("b_ss")) + _to_int(s.get("b_pn")) + _to_int(s.get("b_other"))
-    inc_house = _to_int(s.get("hh_rent")) + _to_int(s.get("hh_annuity")) + _to_int(s.get("hh_invest")) + _to_int(s.get("hh_trust")) + _to_int(s.get("hh_other"))
-    va_A = _to_int(s.get("a_va_monthly"))
-    va_B = _to_int(s.get("b_va_monthly"))
-    rm_monthly = _to_int(s.get("rm_monthly_income"))  # reverse mortgage monthly proceeds (tenure/term)
-    income_total = inc_A + inc_B + inc_house + va_A + va_B + rm_monthly
-
-    # Monthly costs
-    care_total = _to_int(s.get("care_monthly_total"))
-    home_monthly = _to_int(s.get("home_monthly_total"))
-    mods_monthly = _to_int(s.get("mods_monthly_total"))
-    other_monthly = _to_int(s.get("other_monthly_total"))
-    monthly_costs_total = care_total + home_monthly + mods_monthly + other_monthly
-
-    # Assets (effective)
-    assets_common = _to_int(s.get("assets_common_total"))
-    assets_detail = _to_int(s.get("assets_detailed_total"))
-    sale_proceeds = _to_int(s.get("home_sale_net_proceeds"))
-    rm_lump = _to_int(s.get("rm_lump_applied"))  # reverse mortgage lump sum applied to assets
-    rm_fees_oop = _to_int(s.get("rm_fees_oop_total"))  # out-of-pocket fees reduce assets
-    mods_upfront = _to_int(s.get("mods_upfront_total"))
-    mods_deduct = bool(s.get("mods_deduct_assets", False))
-    assets_total_effective = assets_common + assets_detail + sale_proceeds + rm_lump - rm_fees_oop - (mods_upfront if mods_deduct else 0)
-
-    gap = monthly_costs_total - income_total
-    months_runway = (assets_total_effective // gap) if (gap > 0 and assets_total_effective > 0) else 0
-    years, rem = (months_runway // 12, months_runway % 12) if months_runway else (0, 0)
-
-    return {
-        "inc_A": inc_A, "inc_B": inc_B, "inc_house": inc_house, "va_A": va_A, "va_B": va_B, "rm_monthly": rm_monthly,
-        "income_total": income_total,
-        "care_total": care_total, "home_monthly": home_monthly, "mods_monthly": mods_monthly, "other_monthly": other_monthly, "monthly_costs_total": monthly_costs_total,
-        "assets_common": assets_common, "assets_detail": assets_detail, "sale_proceeds": sale_proceeds,
-        "rm_lump": rm_lump, "rm_fees_oop": rm_fees_oop,
-        "mods_upfront": mods_upfront, "mods_deduct": mods_deduct, "assets_total_effective": assets_total_effective,
-        "gap": gap, "months_runway": months_runway, "years": years, "rem": rem,
-    }
-
-
 import os
 from pathlib import Path
 import traceback

@@ -6,18 +6,7 @@ from typing import Dict, Any, List
 import streamlit as st
 
 # ---- Single source of truth for location factors ----
-# Load LOCATION_FACTORS from config if available, else fallback
-try:
-    import json, pathlib
-    _cfgp = pathlib.Path(__file__).parent / "config" / "pricing_config.json"
-    if _cfgp.exists():
-        _LOC_F = json.loads(_cfgp.read_text()).get("location_factors", {})
-    else:
-        _LOC_F = {}
-except Exception:
-    _LOC_F = {}
-
-LOCATION_FACTORS = _LOC_F or {
+LOCATION_FACTORS = {
     "National": 1.00,
     "Washington": 1.15,
     "California": 1.25,
