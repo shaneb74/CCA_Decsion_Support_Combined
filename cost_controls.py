@@ -305,3 +305,23 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
     st.subheader("Combined Total")
     st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
     return combined
+
+
+# --- Mock AI handoff button for Cost Planner (isolated, no math changes) ---
+def _ai_handoff_mock_ui():
+    try:
+        AI_HANDOFF_ENABLED = True
+        if AI_HANDOFF_ENABLED and st.button("Discuss this with my AI Agent", key="ai_handoff_costplanner"):
+            # Lightweight read-only summary
+            def _to_int(v, default=0):
+                try: return int(v or 0)
+                except: 
+                    try: return int(float(str(v).replace("$","").replace(",","")))
+                    except: return default
+            s = st.session_state
+            income_total = sum(_to_int(s.get(k)) for k in ["a_ss","a_pn","a_other","b_ss","b_pn","b_other","hh_rent","hh_annuity","hh_invest","hh_trust","hh_other","a_va_monthly","b_va_monthly","rm_monthly_income"])
+            costs_total = sum(_to_int(s.get(k)) for k in ["care_monthly_total","home_monthly_total","mods_monthly_total","other_monthly_total"])
+            gap = costs_total - income_total
+            st.info(f"(Mock) Sent to AI Agent — Income: ${income_total:,}, Costs: ${costs_total:,}, Gap: ${gap:,}")
+    except Exception as e:
+        st.warning(f"AI handoff mock unavailable: {e}")
