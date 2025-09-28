@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import traceback
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 
 from cost_controls import (
     render_location_control,
@@ -784,7 +786,7 @@ elif st.session_state.step == "audience":
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
         rel = {"Myself":"self","My spouse/partner":"spouse","My parent":"parent","Someone else":"other"}[role]
-        people.append({"id":"A","display_name":n,"relationship":rel})
+        people.append({"id":"A","display_name":n,"relationship":"rel"})
     if st.button("Continue", key="aud_continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
@@ -965,42 +967,21 @@ elif st.session_state.step == "breakdown":
     ])
     # Monthly Costs Bar Chart
     st.subheader("Monthly Costs Breakdown")
-    monthly_costs_data = [
-        {"label": "Care Costs", "value": care_total},
-        {"label": "Home Decisions", "value": home_monthly},
-        {"label": "Home Modifications", "value": mods_monthly},
-        {"label": "Other Monthly Costs", "value": other_monthly},
-    ]
-    if any(item["value"] > 0 for item in monthly_costs_data):
-        ```chartjs
-        {
-            "type": "bar",
-            "data": {
-                "labels": ["Care Costs", "Home Decisions", "Home Modifications", "Other Monthly"],
-                "datasets": [{
-                    "label": "Monthly Costs ($)",
-                    "data": [${care_total}, ${home_monthly}, ${mods_monthly}, ${other_monthly}],
-                    "backgroundColor": ["#4CAF50", "#2196F3", "#FF9800", "#F44336"],
-                    "borderColor": ["#388E3C", "#1976D2", "#F57C00", "#D32F2F"],
-                    "borderWidth": 1
-                }]
-            },
-            "options": {
-                "scales": {
-                    "y": {
-                        "beginAtZero": true,
-                        "title": { "display": true, "text": "Amount ($)" }
-                    },
-                    "x": {
-                        "title": { "display": true, "text": "Cost Category" }
-                    }
-                },
-                "plugins": {
-                    "legend": { "display": false }
-                }
-            }
-        }
-        ```
+    monthly_costs_data = {
+        "Category": ["Care Costs", "Home Decisions", "Home Modifications", "Other Monthly"],
+        "Amount": [care_total, home_monthly, mods_monthly, other_monthly]
+    }
+    if any(amount > 0 for amount in monthly_costs_data["Amount"]):
+        fig = px.bar(
+            x=monthly_costs_data["Category"],
+            y=monthly_costs_data["Amount"],
+            labels={"x": "Cost Category", "y": "Amount ($)"},
+            title="Monthly Costs ($)",
+            color=monthly_costs_data["Category"],
+            color_discrete_sequence=["#4CAF50", "#2196F3", "#FF9800", "#F44336"]
+        )
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
@@ -1019,42 +1000,31 @@ elif st.session_state.step == "breakdown":
     ])
     # Income Sources Pie Chart
     st.subheader("Income Sources Breakdown")
-    income_data = [
-        {"label": "Individual A", "value": inc_A},
-        {"label": "Individual B", "value": inc_B},
-        {"label": "Household", "value": inc_house},
-        {"label": "VA A", "value": va_A},
-        {"label": "VA B", "value": va_B},
-    ]
-    income_data = [item for item in income_data if item["value"] > 0]
-    if income_data:
-        ```chartjs
-        {
-            "type": "pie",
-            "data": {
-                "labels": [${",".join(f'"{item["label"]}"' for item in income_data)}],
-                "datasets": [{
-                    "data": [${",".join(str(item["value"]) for item in income_data)}],
-                    "backgroundColor": ["#4CAF50", "#2196F3", "#FF9800", "#F44336", "#9C27B0"],
-                    "borderColor": ["#388E3C", "#1976D2", "#F57C00", "#D32F2F", "#7B1FA2"],
-                    "borderWidth": 1
-                }]
-            },
-            "options": {
-                "plugins": {
-                    "legend": { "position": "right" },
-                    "title": { "display": true, "text": "Income Sources ($)" }
-                }
-            }
-        }
-        ```
+    income_data = {
+        "Source": ["Individual A", "Individual B", "Household", "VA A", "VA B"],
+        "Amount": [inc_A, inc_B, inc_house, va_A, va_B]
+    }
+    income_data_filtered = {
+        "Source": [source for source, amount in zip(income_data["Source"], income_data["Amount"]) if amount > 0],
+        "Amount": [amount for amount in income_data["Amount"] if amount > 0]
+    }
+    if income_data_filtered["Amount"]:
+        fig = px.pie(
+            names=income_data_filtered["Source"],
+            values=income_data_filtered["Amount"],
+            title="Income Sources ($)",
+            color_discrete_sequence=["#4CAF50", "#2196F3", "#FF9800", "#F44336", "#9C27B0"]
+        )
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No income sources entered yet.")
     st.subheader("Assets")
     assets_common = int(s.get("assets_common_total", 0))
     assets_detail = int(s.get("assets_detailed_total", 0))
     home_sale_proceeds = int(s.get("home_sale_net_proceeds", 0))
-    assets_total = assets_common + assets_detail + home_sale_proceeds
+    mods_deduct = s.get("mods_deduct_assets", False)
+    assets_total = assets_common + assets_detail + (home_sale_proceeds if not mods_deduct else max(0, home_sale_proceeds - int(s.get("mods_upfront_total", 0))))
     st.table([
         {"Category": "Common Assets", "Amount": money(assets_common)},
         {"Category": "Detailed Assets", "Amount": money(assets_detail)},
@@ -1063,33 +1033,23 @@ elif st.session_state.step == "breakdown":
     ])
     # Assets Pie Chart
     st.subheader("Assets Breakdown")
-    assets_data = [
-        {"label": "Common Assets", "value": assets_common},
-        {"label": "Detailed Assets", "value": assets_detail},
-        {"label": "Home Sale Proceeds", "value": home_sale_proceeds},
-    ]
-    assets_data = [item for item in assets_data if item["value"] > 0]
-    if assets_data:
-        ```chartjs
-        {
-            "type": "pie",
-            "data": {
-                "labels": [${",".join(f'"{item["label"]}"' for item in assets_data)}],
-                "datasets": [{
-                    "data": [${",".join(str(item["value"]) for item in assets_data)}],
-                    "backgroundColor": ["#4CAF50", "#2196F3", "#FF9800"],
-                    "borderColor": ["#388E3C", "#1976D2", "#F57C00"],
-                    "borderWidth": 1
-                }]
-            },
-            "options": {
-                "plugins": {
-                    "legend": { "position": "right" },
-                    "title": { "display": true, "text": "Assets Breakdown ($)" }
-                }
-            }
-        }
-        ```
+    assets_data = {
+        "Category": ["Common Assets", "Detailed Assets", "Home Sale Proceeds"],
+        "Amount": [assets_common, assets_detail, home_sale_proceeds]
+    }
+    assets_data_filtered = {
+        "Category": [cat for cat, amount in zip(assets_data["Category"], assets_data["Amount"]) if amount > 0],
+        "Amount": [amount for amount in assets_data["Amount"] if amount > 0]
+    }
+    if assets_data_filtered["Amount"]:
+        fig = px.pie(
+            names=assets_data_filtered["Category"],
+            values=assets_data_filtered["Amount"],
+            title="Assets Breakdown ($)",
+            color_discrete_sequence=["#4CAF50", "#2196F3", "#FF9800"]
+        )
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No assets entered yet.")
     st.subheader("Totals")
