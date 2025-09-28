@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 # == PFMA Tools v2 (stable, read-only, unique widget keys) ==
-def:
+    def:
     # Render-once guard; PFMA resets this each run
     if st.session_state.get("_pfma_tools_rendered", False):
         return
