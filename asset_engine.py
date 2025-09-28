@@ -48,7 +48,7 @@ class HouseholdResult:
     assets_detailed_total: int
     # Liabilities
     liabilities_total: int
-    # Final assets rollup (applies proceeds, deducts mods and liabilities if selected)
+    # Final assets rollup (applies proceeds, deducts mods upfront if selected, and liabilities)
     assets_total_effective: int
 
     def as_dict(self) -> Dict[str, Any]:
@@ -101,6 +101,7 @@ class IncomeAssetsEngine:
                 "Veteran with spouse (A&A)",
                 "Two veterans married, both A&A (household ceiling)",
                 "Surviving spouse (A&A)",
+                "Other"
             ]
             va_values = {
                 "None": 0.0,
@@ -109,24 +110,31 @@ class IncomeAssetsEngine:
                 "Two veterans married, both A&A (household ceiling)": 3740.50,
                 "Surviving spouse (A&A)": 1515.58,
             }
-            ltc_add = 1800  # From settings
             va_A = 0; va_B = 0; ltc_A = 0; ltc_B = 0
             if len(names) > 1:
                 c1, c2 = st.columns(2)
                 with c1:
-                    va_A = va_values.get(st.selectbox(f"VA benefit — {names[0]}", va_options, key="a_va"), 0)
-                    ltc_A = ltc_add if st.checkbox(f"Long-term care insurance — {names[0]}", key="a_ltc") else 0
+                    va_category_A = st.selectbox(f"VA category — {names[0]}", va_options, key="a_va")
+                    va_A = va_values.get(va_category_A, 0) if va_category_A != "Other" else _money(f"Custom VA monthly — {names[0]}", "custom_va_A", default=0)
+                    if st.checkbox(f"LTC insurance — {names[0]}", key="a_ltc"):
+                        ltc_A = _money(f"LTC monthly payout — {names[0]}", "ltc_add_A", default=1800)
                 with c2:
-                    va_B = va_values.get(st.selectbox(f"VA benefit — {names[1]}", va_options, key="b_va"), 0)
-                    ltc_B = ltc_add if st.checkbox(f"Long-term care insurance — {names[1]}", key="b_ltc") else 0
+                    va_category_B = st.selectbox(f"VA category — {names[1]}", va_options, key="b_va")
+                    va_B = va_values.get(va_category_B, 0) if va_category_B != "Other" else _money(f"Custom VA monthly — {names[1]}", "custom_va_B", default=0)
+                    if st.checkbox(f"LTC insurance — {names[1]}", key="b_ltc"):
+                        ltc_B = _money(f"LTC monthly payout — {names[1]}", "ltc_add_B", default=1800)
             else:
-                va_A = va_values.get(st.selectbox(f"VA benefit — {names[0]}", va_options, key="a_va"), 0)
-                ltc_A = ltc_add if st.checkbox(f"Long-term care insurance — {names[0]}", key="a_ltc") else 0
-            # Validate VA eligibility
-            if va_A > 0 and "Veteran" not in st.session_state.get("pfma_marital", {}).get("A", "None"):
-                st.warning(f"VA benefit selected for {names[0]}, but marital status does not indicate veteran eligibility.")
-            if va_B > 0 and "Veteran" not in st.session_state.get("pfma_marital", {}).get("B", "None"):
-                st.warning(f"VA benefit selected for {names[1] if len(names) > 1 else names[0]}, but marital status does not indicate veteran eligibility.")
+                va_category_A = st.selectbox(f"VA category — {names[0]}", va_options, key="a_va")
+                va_A = va_values.get(va_category_A, 0) if va_category_A != "Other" else _money(f"Custom VA monthly — {names[0]}", "custom_va_A", default=0)
+                if st.checkbox(f"LTC insurance — {names[0]}", key="a_ltc"):
+                    ltc_A = _money(f"LTC monthly payout — {names[0]}", "ltc_add_A", default=1800)
+            # Validation
+            va_eligibility = st.checkbox("Confirm veteran eligibility for VA", key="va_eligibility_confirm")
+            if (va_A + va_B > 0) and not va_eligibility:
+                st.warning("Please confirm veteran eligibility for VA benefits.")
+            ltc_eligibility = st.checkbox("Confirm LTC policy eligibility", key="ltc_eligibility_confirm")
+            if (ltc_A + ltc_B > 0) and not ltc_eligibility:
+                st.warning("Please confirm LTC policy eligibility.")
             return int(va_A), int(va_B), int(ltc_A), int(ltc_B), int(va_A + va_B + ltc_A + ltc_B)
 
     def _section_home_decision(self):
@@ -262,14 +270,35 @@ class IncomeAssetsEngine:
         assets_detail = self._section_assets_detailed()
         liabilities_total = self._section_liabilities()
 
-        # Effective assets rollup (apply proceeds, deduct mods and liabilities)
+        # Effective assets rollup (apply proceeds, deduct mods upfront if selected, and liabilities)
         effective_assets = assets_common + assets_detail + sale_net - liabilities_total
         if mods_deduct:
             effective_assets -= mods_upfront
         if effective_assets < 0:
             effective_assets = 0
 
-        # Return consolidated result
+        # Save to session state
+        st.session_state.household_result = asdict(HouseholdResult(
+            indiv_income_A=a_indiv,
+            indiv_income_B=b_indiv,
+            household_income=hh_income,
+            va_A=va_A,
+            va_B=va_B,
+            ltc_add_A=ltc_A,
+            ltc_add_B=ltc_B,
+            benefits_total=benefits_total,
+            home_monthly_total=home_monthly,
+            home_sale_net_proceeds=sale_net,
+            mods_monthly_total=mods_monthly,
+            mods_upfront_total=mods_upfront,
+            mods_deduct_assets=mods_deduct,
+            other_monthly_total=other_monthly,
+            assets_common_total=assets_common,
+            assets_detailed_total=assets_detail,
+            liabilities_total=liabilities_total,
+            assets_total_effective=effective_assets,
+        ))
+
         return HouseholdResult(
             indiv_income_A=a_indiv,
             indiv_income_B=b_indiv,
