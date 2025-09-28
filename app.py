@@ -1,6 +1,12 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
+def _fmt_money(n):
+    try: return f"${int(n):,}"
+    except Exception:
+        try: return f"${float(n):,.0f}"
+        except Exception: return str(n)
+
 def _to_int_safe(v, default=0):
     try:
         if v is None or v == "": return default
@@ -41,19 +47,84 @@ def compute_totals(state):
     assets_total_effective = assets_common + assets_detail + sale_proceeds + rm_lump - rm_fees_oop - (mods_upfront if mods_deduct else 0)
     gap = monthly_costs_total - income_total
     months_runway = int(assets_total_effective // gap) if (gap>0 and assets_total_effective>0) else 0
-    return {
-        "inc_A": inc_A, "inc_B": inc_B, "inc_house": inc_house,
-        "va_A": va_A, "va_B": va_B, "rm_monthly": rm_monthly,
-        "income_total": income_total,
-        "care_total": care_total, "home_monthly": home_monthly,
-        "mods_monthly": mods_monthly, "other_monthly": other_monthly,
-        "monthly_costs_total": monthly_costs_total,
-        "assets_common": assets_common, "assets_detail": assets_detail,
-        "sale_proceeds": sale_proceeds, "rm_lump": rm_lump, "rm_fees_oop": rm_fees_oop,
-        "mods_upfront": mods_upfront, "mods_deduct": mods_deduct,
-        "assets_total_effective": assets_total_effective,
-        "gap": gap, "months_runway": months_runway, "years": months_runway//12, "rem": months_runway%12
-    }
+    return {"inc_A":inc_A,"inc_B":inc_B,"inc_house":inc_house,"va_A":va_A,"va_B":va_B,"rm_monthly":rm_monthly,"income_total":income_total,
+            "care_total":care_total,"home_monthly":home_monthly,"mods_monthly":mods_monthly,"other_monthly":other_monthly,"monthly_costs_total":monthly_costs_total,
+            "assets_common":assets_common,"assets_detail":assets_detail,"sale_proceeds":sale_proceeds,"rm_lump":rm_lump,"rm_fees_oop":rm_fees_oop,"mods_upfront":mods_upfront,"mods_deduct":mods_deduct,
+            "assets_total_effective":assets_total_effective,"gap":gap,"months_runway":months_runway,"years":months_runway//12,"rem":months_runway%12}
+
+def _fmt_money(n):
+    try: return f"${int(n):,}"
+    except Exception:
+        try: return f"${float(n):,.0f}"
+        except Exception: return str(n)
+
+def _render_pfma_tools_block():
+    import streamlit as st, json, csv
+    from io import StringIO
+    t = compute_totals(st.session_state) if "compute_totals" in globals() else {}
+    inc = {"individual_A": t.get("inc_A",0),"individual_B": t.get("inc_B",0),"household": t.get("inc_house",0),"va_A": t.get("va_A",0),"va_B": t.get("va_B",0),"reverse_mortgage_monthly": t.get("rm_monthly",0),"total": t.get("income_total",0)}
+    cst = {"care": t.get("care_total",0),"home": t.get("home_monthly",0),"mods_monthly": t.get("mods_monthly",0),"other": t.get("other_monthly",0),"total": t.get("monthly_costs_total",0)}
+    ast = {"common": t.get("assets_common",0),"less_common": t.get("assets_detail",0),"home_sale_proceeds_applied": t.get("sale_proceeds",0),"reverse_mortgage_lump_applied": t.get("rm_lump",0),"rm_fees_out_of_pocket": t.get("rm_fees_oop",0),"total_effective": t.get("assets_total_effective",0)}
+    pic = {"gap": t.get("gap",0), "years": t.get("years",0), "rem": t.get("rem",0), "months": t.get("months_runway",0)}
+    st.markdown("<style>.pfma-card{border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafafa;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}</style>", unsafe_allow_html=True)
+    colA, colB = st.columns(2)
+    with colA:
+        st.markdown("<div class='pfma-card'><h4>Exports</h4>", unsafe_allow_html=True)
+        buf = StringIO(); w = csv.writer(buf)
+        w.writerow(["Section","Item","Amount"])
+        for k,v in inc.items(): w.writerow(["Income",k,v])
+        for k,v in cst.items(): w.writerow(["Costs",k,v])
+        for k,v in ast.items(): w.writerow(["Assets",k,v])
+        w.writerow(["Picture","gap",pic["gap"]]); w.writerow(["Picture","runway_months",pic["months"]])
+        st.download_button("Export CSV", buf.getvalue().encode("utf-8"), "senior_navigator_export.csv", "text/csv", key="pfma_csv")
+        st.caption("CSV for spreadsheets.")
+        def row(lbl,val): return f"<tr><td>{lbl}</td><td>{_fmt_money(val)}</td></tr>"
+        html = ['<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>','<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>']
+        html.append('<h2>Financial Breakdown</h2>'); html.append('<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>')
+        html += [row("Individual A", inc["individual_A"]), row("Individual B", inc["individual_B"]), row("Household", inc["household"]), row("VA — A", inc["va_A"]), row("VA — B", inc["va_B"]), row("Reverse mortgage (monthly)", inc["reverse_mortgage_monthly"]), f"<tr><th>Total</th><th>{_fmt_money(inc['total'])}</th></tr>", "</table>"]
+        html.append('<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>')
+        html += [row("Care", cst["care"]), row("Home", cst["home"]), row("Home modifications", cst["mods_monthly"]), row("Other", cst["other"]), f"<tr><th>Total</th><th>{_fmt_money(cst['total'])}</th></tr>", "</table>"]
+        html.append('<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>')
+        html += [row("Common", ast["common"]), row("Less common", ast["less_common"]), row("Home sale net proceeds (applied)", ast["home_sale_proceeds_applied"]), row("Reverse mortgage lump (applied)", ast["reverse_mortgage_lump_applied"]), f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_fmt_money(ast['rm_fees_out_of_pocket'])}</td></tr>", f"<tr><th>Assets Total (effective)</th><th>{_fmt_money(ast['total_effective'])}</th></tr>", "</table>"]
+        if pic["gap"] > 0:
+            ym = f"{pic['years']} years {pic['rem']} months" if pic['years'] else f"{pic['rem']} months"; html.append(f"<p><b>Monthly gap:</b> {_fmt_money(pic['gap'])}. <b>Estimated runway:</b> {ym}.</p>")
+        else:
+            html.append(f"<p><b>Monthly surplus:</b> {_fmt_money(-pic['gap'])}.</p>")
+        html.append("</body></html>")
+        st.download_button("Export Print View (HTML)", ("\n".join(html)).encode("utf-8"), "senior_navigator_export.html", "text/html", key="pfma_html")
+        st.caption("Print-friendly; use your browser to save as PDF.")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with colB:
+        st.markdown("<div class='pfma-card'><h4>AI Agent handoff</h4>", unsafe_allow_html=True)
+        preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers","Tune in-home care hours"], key="pfma_preset")
+        import json as _json
+        preview = {"goal": preset, "context": {"income_total": inc["total"], "costs_total": cst["total"], "gap": pic["gap"], "assets_total_effective": ast["total_effective"], "home_decision": st.session_state.get("home_decision",""), "rm_plan": st.session_state.get("rm_plan","")}, "request": "Suggest 3 concrete options with pros/cons and a first step."}
+        st.text_area("Prompt that would be sent", value=_json.dumps(preview, indent=2), height=200, key="pfma_prompt")
+        if st.button("Send to AI Agent (mock)", key="pfma_send"):
+            opener = f"I see total monthly income {_fmt_money(inc['total'])} and costs {_fmt_money(cst['total'])}. "
+            if pic["gap"] <= 0: opener += f"You have a monthly surplus of {_fmt_money(-pic['gap'])}."
+            else:
+                yrs, rem = pic["years"], pic["rem"]
+                if yrs or rem: opener += f"You have a monthly gap of {_fmt_money(pic['gap'])}. Effective assets {_fmt_money(ast['total_effective'])} cover about {yrs}y {rem}m at current spend."
+                else: opener += f"You have a monthly gap of {_fmt_money(pic['gap'])}."
+            st.success("Mock handoff created."); st.write("**Agent:** " + opener)
+        st.caption("Mock only — nothing leaves your browser.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---- PFMA tools stub (prevents NameError; replaced by full impl below if present) ----
+if "_render_pfma_tools_block" not in globals():
+    def _render_pfma_tools_block():
+        try:
+            import pfma_controls  # if your project defines a tools renderer there
+            if hasattr(pfma_controls, "_render_pfma_tools_block"):
+                return pfma_controls._render_pfma_tools_block()
+            if hasattr(pfma_controls, "_render_tools_pfma"):
+                return pfma_controls._render_tools_pfma()
+        except Exception as _e:
+            pass
+        import streamlit as st
+        st.info("Tools section is not available in this build.")
 
 
 # ---- PFMA tools alias (non-recursive) ----
