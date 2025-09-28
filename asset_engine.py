@@ -275,7 +275,6 @@ class IncomeAssetsEngine:
         # Persist for Breakdown consumers
         st.session_state["home_monthly_total"] = int(home_monthly)
         st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
-        _ai_handoff_mock_ui_home()
         return int(home_monthly), int(sale_proceeds)
 
     def _section_mods(self):
@@ -405,21 +404,3 @@ class IncomeAssetsEngine:
             assets_detailed_total=assets_detail,
             assets_total_effective=effective_assets,
         )
-
-
-def _ai_handoff_mock_ui_home():
-    try:
-        AI_HANDOFF_ENABLED = True
-        if AI_HANDOFF_ENABLED and st.button("Discuss this with my AI Agent", key="ai_handoff_home"):
-            s = st.session_state
-            def _to_int(v, default=0):
-                try: return int(v or 0)
-                except:
-                    try: return int(float(str(v).replace("$","").replace(",","")))
-                    except: return default
-            income_total = sum(_to_int(s.get(k)) for k in ["a_ss","a_pn","a_other","b_ss","b_pn","b_other","hh_rent","hh_annuity","hh_invest","hh_trust","hh_other","a_va_monthly","b_va_monthly","rm_monthly_income"])
-            costs_total = sum(_to_int(s.get(k)) for k in ["care_monthly_total","home_monthly_total","mods_monthly_total","other_monthly_total"])
-            gap = costs_total - income_total
-            st.info(f"(Mock) Sent to AI Agent — Income: ${income_total:,}, Costs: ${costs_total:,}, Gap: ${gap:,}")
-    except Exception as e:
-        st.warning(f"AI handoff mock unavailable: {e}")
