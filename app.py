@@ -1,12 +1,58 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-import os
-from pathlib import Path
-import traceback
-import streamlit as st
 
-from cost_controls import (
+def render_breakdown_financial_picture():
+    s = st.session_state
+    totals = compute_totals(s)
+    money = lambda x: f"${int(x):,}"
+
+    st.header("Financial Breakdown")
+    with st.expander("Monthly Income — Subtotals & Total", expanded=True):
+        st.table([
+            {"Source": "Individual A (SS + Pension + Other)", "Monthly": money(totals["inc_A"])},
+            {"Source": "Individual B (SS + Pension + Other)", "Monthly": money(totals["inc_B"])},
+            {"Source": "Household (Rent + Annuity + Investments + Trust + Other)", "Monthly": money(totals["inc_house"])},
+            {"Source": "VA — A", "Monthly": money(totals["va_A"])},
+            {"Source": "VA — B", "Monthly": money(totals["va_B"])},
+            {"Source": "Income Total", "Monthly": money(totals["income_total"])},
+        ])
+
+    with st.expander("Monthly Costs — Subtotals & Total", expanded=True):
+        st.table([
+            {"Category": "Care (chosen scenario)", "Monthly": money(totals["care_total"])},
+            {"Category": "Home decisions", "Monthly": money(totals["home_monthly"])},
+            {"Category": "Home modifications (monthly)", "Monthly": money(totals["mods_monthly"])},
+            {"Category": "Other monthly costs", "Monthly": money(totals["other_monthly"])},
+            {"Category": "Costs Total", "Monthly": money(totals["monthly_costs_total"])},
+        ])
+
+    with st.expander("Assets — Effective for Runway", expanded=True):
+        st.table([
+            {"Assets": "Common assets subtotal", "Amount": money(totals["assets_common"])},
+            {"Assets": "Less common assets subtotal", "Amount": money(totals["assets_detail"])},
+            {"Assets": "Home sale net proceeds (applied)", "Amount": money(totals["sale_proceeds"])},
+            {"Assets": "Home mods upfront (deducted?)", "Amount": f"- {money(totals['mods_upfront'])}" if totals["mods_deduct"] else money(0)},
+            {"Assets": "Assets Total (effective)", "Amount": money(totals["assets_total_effective"])},
+        ])
+
+    st.subheader("Your Financial Picture")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Monthly Income", money(totals["income_total"]))
+    col2.metric("Total Monthly Costs", money(totals["monthly_costs_total"]))
+    if totals["gap"] <= 0:
+        col3.metric("Monthly Surplus", money(-totals["gap"]))
+        st.success("You have a monthly surplus. No asset drawdown needed.")
+    else:
+        col3.metric("Monthly Gap", money(totals["gap"]))
+        if totals["assets_total_effective"] > 0:
+            years, rem = totals["years"], totals["rem"]
+            runway_text = f"{years} years {rem} months" if years > 0 else f"{rem} months"
+            st.info(f"Estimated runway from assets: **{runway_text}**")
+        else:
+            st.warning("No assets entered to cover the monthly gap.")
+    st.divider()
+
 
 
 # --- Financial math helper (single source of truth) ---
@@ -56,6 +102,12 @@ def compute_totals(s):
     }
 
 
+import os
+from pathlib import Path
+import traceback
+import streamlit as st
+
+from cost_controls import (
     render_location_control,
     render_costs_for_active_recommendations,
     CONDITION_OPTIONS,
@@ -968,101 +1020,6 @@ elif st.session_state.step == "household":
         if st.button("Finish", key="hh_finish"):
             st.session_state.step = "intro"; st.rerun()
 elif st.session_state.step == "breakdown":
-    st.header("Detailed Breakdown")
-    s = st.session_state
-    people = s.get("people", [])
-    person_costs: dict = s.get("person_costs", {})
-    st.subheader("Care Costs by Person")
-    care_rows = []; care_total = 0
-    for p in people:
-        pid = p["id"]; name = p["display_name"]
-        rec = s.get("planner_results", {}).get(pid, None)
-        default_care = getattr(rec, "care_type", None) if rec else None
-        scenario = s.get("care_overrides", {}).get(pid, default_care) or "none"
-        cost = int(person_costs.get(pid, 0))
-        def pick(base): return s.get(f"{base}_{pid}") or s.get(base) or "—"
-        if scenario == "assisted_living":
-            cond = s.get(f"al_conditions_saved_{pid}", s.get("al_conditions"))
-            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
-            detail = ", ".join([f"Care: {pick('al_care_level')}", f"Room: {pick('al_room_type')}", f"Mobility: {pick('al_mobility')}", f"Conditions: {cond_str}"])
-        elif scenario == "memory_care":
-            cond = s.get(f"mc_conditions_saved_{pid}", s.get("mc_conditions"))
-            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
-            detail = ", ".join([f"Care: {pick('mc_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
-        elif scenario == "in_home":
-            hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
-            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
-            cond = s.get(f"ih_conditions_saved_{pid}", s.get("ih_conditions"))
-            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
-            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}, Conditions: {cond_str}"
-        else:
-            detail = "—"
-        care_rows.append({"Person": name, "Scenario": scenario.replace('_',' ').title(), "Details": detail, "Monthly Cost": money(cost)})
-        care_total += cost
-    if care_rows: st.table(care_rows)
-    else: st.info("No care costs yet. Choose a scenario in the Cost Planner.")
-    st.subheader("Additional Monthly Costs (Selected)")
-    home_monthly = int(s.get("home_monthly_total", 0))
-    mods_monthly = int(s.get("mods_monthly_total", 0))
-    other_monthly = int(s.get("other_monthly_total", 0))
-    addl_total = home_monthly + mods_monthly + other_monthly
-    st.table([
-        {"Category":"Home decisions", "Monthly":money(home_monthly)},
-        {"Category":"Home modifications", "Monthly":money(mods_monthly)},
-        {"Category":"Other monthly costs", "Monthly":money(other_monthly)},
-        {"Category":"Subtotal (additional)", "Monthly":money(addl_total)},
-    ])
-    totals = compute_totals(st.session_state)
-    money = lambda x: f"${int(x):,}"
-
-    st.subheader("Monthly Income")
-    st.caption("Subtotals update as you type")
-    st.table([
-        {"Source": "Individual A (SS + Pension + Other)", "Monthly": money(totals["inc_A"])},
-        {"Source": "Individual B (SS + Pension + Other)", "Monthly": money(totals["inc_B"])},
-        {"Source": "Household (Rent + Annuity + Investments + Trust + Other)", "Monthly": money(totals["inc_house"])},
-        {"Source": "VA — A", "Monthly": money(totals["va_A"])},
-        {"Source": "VA — B", "Monthly": money(totals["va_B"])},
-        {"Source": "Income Total", "Monthly": money(totals["income_total"])}
-    ])
-
-    st.subheader("Monthly Costs")
-    st.table([
-        {"Category": "Care (chosen scenario)", "Monthly": money(totals["care_total"])},
-        {"Category": "Home decisions", "Monthly": money(totals["home_monthly"])},
-        {"Category": "Home modifications (monthly)", "Monthly": money(totals["mods_monthly"])},
-        {"Category": "Other monthly costs", "Monthly": money(totals["other_monthly"])},
-        {"Category": "Costs Total", "Monthly": money(totals["monthly_costs_total"])},
-    ])
-
-    st.subheader("Assets (for runway)")
-    st.table([
-        {"Assets": "Common assets subtotal", "Amount": money(totals["assets_common"])},
-        {"Assets": "Less common assets subtotal", "Amount": money(totals["assets_detail"])},
-        {"Assets": "Home sale net proceeds (applied)", "Amount": money(totals["sale_proceeds"])},
-        {"Assets": "Home mods upfront (deducted?)", "Amount": f"- {money(totals['mods_upfront'])}" if totals["mods_deduct"] else money(0)},
-        {"Assets": "Assets Total (effective)", "Amount": money(totals["assets_total_effective"])},
-    ])
-
-    st.subheader("Your Financial Picture")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Monthly Income", money(totals["income_total"]))
-    col2.metric("Total Monthly Costs", money(totals["monthly_costs_total"]))
-    if totals["gap"] <= 0:
-        col3.metric("Monthly Surplus", money(-totals["gap"]))
-        st.success("You have a monthly surplus. No asset drawdown needed.")
-    else:
-        col3.metric("Monthly Gap", money(totals["gap"]))
-        if totals["assets_total_effective"] > 0:
-            runway_text = f"{totals['years']} years {totals['rem']} months" if totals["years"] > 0 else f"{totals['rem']} months"
-            st.info(f"Estimated runway from assets: **{runway_text}**")
-        else:
-            st.warning("No assets entered to cover the monthly gap.")
-    st.divider()
-    cta1, cta2 = st.columns(2)
-    with cta1:
-        if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
-    with cta2:
-        if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
+    render_breakdown_financial_picture()
 elif st.session_state.step == "pfma":
     render_pfma()
