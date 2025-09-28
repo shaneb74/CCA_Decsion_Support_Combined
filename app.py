@@ -1,117 +1,18 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
-
-
-def render_breakdown_financial_picture():
-    s = st.session_state
-    totals = compute_totals(s)
-    money = lambda x: f"${int(x):,}"
-
-    st.header("Financial Breakdown")
-    with st.expander("Monthly Income — Subtotals & Total", expanded=True):
-        st.table([
-            {"Source": "Individual A (SS + Pension + Other)", "Monthly": money(totals["inc_A"])},
-            {"Source": "Individual B (SS + Pension + Other)", "Monthly": money(totals["inc_B"])},
-            {"Source": "Household (Rent + Annuity + Investments + Trust + Other)", "Monthly": money(totals["inc_house"])},
-            {"Source": "VA — A", "Monthly": money(totals["va_A"])},
-            {"Source": "VA — B", "Monthly": money(totals["va_B"])},
-            {"Source": "Income Total", "Monthly": money(totals["income_total"])},
-        ])
-
-    with st.expander("Monthly Costs — Subtotals & Total", expanded=True):
-        st.table([
-            {"Category": "Care (chosen scenario)", "Monthly": money(totals["care_total"])},
-            {"Category": "Home decisions", "Monthly": money(totals["home_monthly"])},
-            {"Category": "Home modifications (monthly)", "Monthly": money(totals["mods_monthly"])},
-            {"Category": "Other monthly costs", "Monthly": money(totals["other_monthly"])},
-            {"Category": "Costs Total", "Monthly": money(totals["monthly_costs_total"])},
-        ])
-
-    with st.expander("Assets — Effective for Runway", expanded=True):
-        st.table([
-            {"Assets": "Common assets subtotal", "Amount": money(totals["assets_common"])},
-            {"Assets": "Less common assets subtotal", "Amount": money(totals["assets_detail"])},
-            {"Assets": "Home sale net proceeds (applied)", "Amount": money(totals["sale_proceeds"])},
-            {"Assets": "Home mods upfront (deducted?)", "Amount": f"- {money(totals['mods_upfront'])}" if totals["mods_deduct"] else money(0)},
-            {"Assets": "Assets Total (effective)", "Amount": money(totals["assets_total_effective"])},
-        ])
-
-    st.subheader("Your Financial Picture")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Monthly Income", money(totals["income_total"]))
-    col2.metric("Total Monthly Costs", money(totals["monthly_costs_total"]))
-    if totals["gap"] <= 0:
-        col3.metric("Monthly Surplus", money(-totals["gap"]))
-        st.success("You have a monthly surplus. No asset drawdown needed.")
-    else:
-        col3.metric("Monthly Gap", money(totals["gap"]))
-        if totals["assets_total_effective"] > 0:
-            years, rem = totals["years"], totals["rem"]
-            runway_text = f"{years} years {rem} months" if years > 0 else f"{rem} months"
-            st.info(f"Estimated runway from assets: **{runway_text}**")
-        else:
-            st.warning("No assets entered to cover the monthly gap.")
-    st.divider()
-
-
-
-# --- Financial math helper (single source of truth) ---
-
-def _to_int(v, default=0):
-    try:
-        return int(v if v is not None and v != "" else default)
-    except Exception:
-        try:
-            return int(float(str(v).replace("$","").replace(",","")))
-        except Exception:
-            return default
-
-def compute_totals(s):
-    # Income
-    inc_A = _to_int(s.get("a_ss")) + _to_int(s.get("a_pn")) + _to_int(s.get("a_other"))
-    inc_B = _to_int(s.get("b_ss")) + _to_int(s.get("b_pn")) + _to_int(s.get("b_other"))
-    inc_house = _to_int(s.get("hh_rent")) + _to_int(s.get("hh_annuity")) + _to_int(s.get("hh_invest")) + _to_int(s.get("hh_trust")) + _to_int(s.get("hh_other"))
-    va_A = _to_int(s.get("a_va_monthly"))
-    va_B = _to_int(s.get("b_va_monthly"))
-    income_total = inc_A + inc_B + inc_house + va_A + va_B
-
-    # Monthly costs
-    care_total = _to_int(s.get("care_monthly_total"))
-    home_monthly = _to_int(s.get("home_monthly_total"))
-    mods_monthly = _to_int(s.get("mods_monthly_total"))
-    other_monthly = _to_int(s.get("other_monthly_total"))
-    monthly_costs_total = care_total + home_monthly + mods_monthly + other_monthly
-
-    # Assets (effective)
-    assets_common = _to_int(s.get("assets_common_total"))
-    assets_detail = _to_int(s.get("assets_detailed_total"))
-    sale_proceeds = _to_int(s.get("home_sale_net_proceeds"))
-    mods_upfront = _to_int(s.get("mods_upfront_total"))
-    mods_deduct = bool(s.get("mods_deduct_assets", False))
-    assets_total_effective = assets_common + assets_detail + sale_proceeds - (mods_upfront if mods_deduct else 0)
-
-    gap = monthly_costs_total - income_total
-    months_runway = (assets_total_effective // gap) if (gap > 0 and assets_total_effective > 0) else 0
-    years, rem = (months_runway // 12, months_runway % 12) if months_runway else (0, 0)
-
-    return {
-        "inc_A": inc_A, "inc_B": inc_B, "inc_house": inc_house, "va_A": va_A, "va_B": va_B, "income_total": income_total,
-        "care_total": care_total, "home_monthly": home_monthly, "mods_monthly": mods_monthly, "other_monthly": other_monthly, "monthly_costs_total": monthly_costs_total,
-        "assets_common": assets_common, "assets_detail": assets_detail, "sale_proceeds": sale_proceeds, "mods_upfront": mods_upfront, "mods_deduct": mods_deduct, "assets_total_effective": assets_total_effective,
-        "gap": gap, "months_runway": months_runway, "years": years, "rem": rem,
-    }
-
-
-import os
-from pathlib import Path
 import traceback
 import streamlit as st
-
-from cost_controls import (
-    render_location_control,
-    render_costs_for_active_recommendations,
-    CONDITION_OPTIONS,
-)
+import json
+import csv
+from io import StringIO
+import os
+from pathlib import Path
+from cost_controls import render_location_control, render_costs_for_active_recommendations, CONDITION_OPTIONS
+from engines import PlannerEngine, CalculatorEngine, PlannerResult
+try:
+    import asset_engine
+except Exception:
+    asset_engine = None
 
 # Feature flag for gamification
 ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lower() in {"true", "1", "yes"}
@@ -141,6 +42,8 @@ st.markdown("""
         from { opacity: 0; }
         to { opacity: 1; }
     }
+    .pfma-card {border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafafa;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
+    .pfma-card h4 { margin: 4px 0 12px 0; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -148,17 +51,194 @@ ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
 
-try:
-    from engines import PlannerEngine, CalculatorEngine, PlannerResult
-except Exception:
-    st.error("Failed to import engines.py")
-    st.code(traceback.format_exc())
-    st.stop()
+# ---------------- PFMA Tools v2 (stable, read-only, unique widget keys) ----------------
+def _render_pfma_tools_block():
+    # Render-once guard; PFMA resets this each run
+    if st.session_state.get("_pfma_tools_rendered", False):
+        return
+    st.session_state["_pfma_tools_rendered"] = True
 
-try:
-    import asset_engine
-except Exception:
-    asset_engine = None
+    def _to_int(v, default=0):
+        try:
+            if v is None or v == "":
+                return default
+            if isinstance(v, (int, float)):
+                return int(v)
+            s = str(v).replace("$","").replace(",","").strip()
+            if s == "":
+                return default
+            return int(float(s))
+        except Exception:
+            return default
+
+    def _g(s, *names, default=0):
+        for n in names:
+            if n in s and s.get(n) not in (None, ""):
+                return s.get(n)
+        return default
+
+    s = st.session_state
+    # Income (synonyms)
+    inc_A = _to_int(_g(s,"inc_A")) or (_to_int(_g(s,"a_ss","ind_a_ss")) + _to_int(_g(s,"a_pn","ind_a_pn")) + _to_int(_g(s,"a_other","ind_a_other")))
+    inc_B = _to_int(_g(s,"inc_B")) or (_to_int(_g(s,"b_ss","ind_b_ss")) + _to_int(_g(s,"b_pn","ind_b_pn")) + _to_int(_g(s,"b_other","ind_b_other")))
+    inc_house = _to_int(_g(s,"inc_house")) or (_to_int(_g(s,"hh_rent","rent_income")) + _to_int(_g(s,"hh_annuity")) + _to_int(_g(s,"hh_invest","hh_investments")) + _to_int(_g(s,"hh_trust")) + _to_int(_g(s,"hh_other")))
+    va_A = _to_int(_g(s,"va_A","a_va_monthly"))
+    va_B = _to_int(_g(s,"va_B","b_va_monthly"))
+    rm_monthly = _to_int(_g(s,"rm_monthly","rm_monthly_income"))
+    income_total = inc_A + inc_B + inc_house + va_A + va_B + rm_monthly
+    # Costs (synonyms)
+    care_total = _to_int(_g(s,"care_total","care_monthly_total"))
+    home_monthly = _to_int(_g(s,"home_monthly","home_monthly_total"))
+    mods_monthly = _to_int(_g(s,"mods_monthly","mods_monthly_total"))
+    other_monthly = _to_int(_g(s,"other_monthly","other_monthly_total"))
+    monthly_costs_total = care_total + home_monthly + mods_monthly + other_monthly
+    # Assets (synonyms)
+    assets_common = _to_int(_g(s,"assets_common","assets_common_total"))
+    assets_detail = _to_int(_g(s,"assets_detail","assets_detailed_total","assets_less_common_total"))
+    apply_sale = bool(_g(s,"apply_sale_to_assets","apply_home_proceeds","apply_net_proceeds","apply_home_sale_to_assets","apply_sale_net_to_assets","apply_home_sale"))
+    sale_proceeds = _to_int(_g(s,"sale_proceeds","home_sale_net_proceeds","sale_net")) if apply_sale else 0
+    rm_lump = _to_int(_g(s,"rm_lump","rm_lump_applied"))
+    rm_fees_oop = _to_int(_g(s,"rm_fees_oop","rm_fees_oop_total"))
+    mods_upfront = _to_int(_g(s,"mods_upfront","mods_upfront_total"))
+    mods_deduct = bool(_g(s,"mods_deduct","mods_deduct_assets"))
+    assets_total_effective = assets_common + assets_detail + sale_proceeds + rm_lump - rm_fees_oop - (mods_upfront if mods_deduct else 0)
+    gap = monthly_costs_total - income_total
+    months_runway = int(assets_total_effective // gap) if (gap > 0 and assets_total_effective > 0) else 0
+    years = months_runway // 12
+    rem = months_runway % 12
+
+    def _m(n):
+        try:
+            return f"${int(n):,}"
+        except Exception:
+            try:
+                return f"${float(n):,.0f}"
+            except Exception:
+                return str(n)
+
+    colA, colB = st.columns(2)
+    # Exports
+    with colA:
+        st.markdown("<div class='pfma-card'><h4>Exports</h4>", unsafe_allow_html=True)
+        buf = StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Section","Item","Value"])
+        # Care Plans
+        for p in s.get("people", []):
+            pid, name = p["id"], p["display_name"]
+            rec = s.get("planner_results", {}).get(pid)
+            scenario = s.get("care_overrides", {}).get(pid, getattr(rec, "care_type", "in_home")) if rec else "in_home"
+            cost = s.get("person_costs", {}).get(pid, 0)
+            conditions = _merge_conditions_from_cost_planner().get(pid, [])
+            adls = _derive_adls_and_others(pid).get("adls", [])
+            writer.writerow(["Care Plan", f"{name} Scenario", scenario.replace('_', ' ').title()])
+            writer.writerow(["Care Plan", f"{name} Monthly Cost", cost])
+            writer.writerow(["Care Plan", f"{name} Conditions", ", ".join(conditions) if conditions else "None"])
+            writer.writerow(["Care Plan", f"{name} ADLs", ", ".join(adls) if adls else "None"])
+        # Income
+        for k,v in {"individual_A":inc_A,"individual_B":inc_B,"household":inc_house,"va_A":va_A,"va_B":va_B,"reverse_mortgage_monthly":rm_monthly,"total":income_total}.items():
+            writer.writerow(["Income",k,v])
+        # Costs
+        for k,v in {"care":care_total,"home":home_monthly,"mods_monthly":mods_monthly,"other":other_monthly,"total":monthly_costs_total}.items():
+            writer.writerow(["Costs",k,v])
+        # Assets
+        for k,v in {"common":assets_common,"less_common":assets_detail,"home_sale_proceeds_applied":sale_proceeds,"reverse_mortgage_lump_applied":rm_lump,"rm_fees_out_of_pocket":rm_fees_oop,"total_effective":assets_total_effective}.items():
+            writer.writerow(["Assets",k,v])
+        writer.writerow(["Picture","gap",gap]); writer.writerow(["Picture","runway_months",months_runway])
+        st.download_button("Export CSV", buf.getvalue().encode("utf-8"), "senior_navigator_export.csv", "text/csv", key="pfma_csv_v2")
+        st.caption("CSV for spreadsheets.")
+        def _row(lbl, val): return f"<tr><td>{lbl}</td><td>{_m(val)}</td></tr>"
+        html_parts = [
+            '<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
+            '<style>body{font-family:Arial,sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>',
+            '<h2>Senior Navigator Export</h2>',
+            '<h3>Care Plans</h3><table><tr><th>Person</th><th>Scenario</th><th>Monthly Cost</th><th>Conditions</th><th>ADLs</th></tr>',
+        ]
+        for p in s.get("people", []):
+            pid, name = p["id"], p["display_name"]
+            rec = s.get("planner_results", {}).get(pid)
+            scenario = s.get("care_overrides", {}).get(pid, getattr(rec, "care_type", "in_home")) if rec else "in_home"
+            cost = s.get("person_costs", {}).get(pid, 0)
+            conditions = _merge_conditions_from_cost_planner().get(pid, [])
+            adls = _derive_adls_and_others(pid).get("adls", [])
+            html_parts.append(f"<tr><td>{name}</td><td>{scenario.replace('_', ' ').title()}</td><td>{_m(cost)}</td><td>{', '.join(conditions) if conditions else 'None'}</td><td>{', '.join(adls) if adls else 'None'}</td></tr>")
+        html_parts.extend([
+            '</table>',
+            '<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>',
+            _row("Individual A", inc_A), _row("Individual B", inc_B), _row("Household", inc_house),
+            _row("VA — A", va_A), _row("VA — B", va_B), _row("Reverse mortgage (monthly)", rm_monthly),
+            f"<tr><th>Total</th><th>{_m(income_total)}</th></tr>", "</table>",
+            '<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>',
+            _row("Care", care_total), _row("Home", home_monthly), _row("Home modifications", mods_monthly),
+            _row("Other", other_monthly), f"<tr><th>Total</th><th>{_m(monthly_costs_total)}</th></tr>", "</table>",
+            '<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>',
+            _row("Common", assets_common), _row("Less common", assets_detail), _row("Home sale net proceeds (applied)", sale_proceeds),
+            _row("Reverse mortgage lump (applied)", rm_lump),
+            f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>",
+            f"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>", "</table>"
+        ])
+        if gap > 0:
+            ym = f"{years} years {rem} months" if years else f"{rem} months"
+            html_parts.append(f"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>")
+        else:
+            html_parts.append(f"<p><b>Monthly surplus:</b> {_m(-gap)}.</p>")
+        html_parts.append("</body></html>")
+        html_blob = "\n".join(html_parts)
+        st.download_button("Export Print View (HTML)", html_blob.encode("utf-8"), "senior_navigator_export.html", "text/html", key="pfma_html_v2")
+        st.caption("Print-friendly; use your browser to save as PDF.")
+        st.markdown("</div>", unsafe_allow_html=True)
+    # AI Agent
+    with colB:
+        st.markdown("<div class='pfma-card'><h4>AI Agent Handoff</h4>", unsafe_allow_html=True)
+        preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers","Tune in-home care hours"], key="pfma_preset_v2")
+        preview = {
+            "goal": preset,
+            "context": {
+                "income_total": income_total,
+                "costs_total": monthly_costs_total,
+                "gap": gap,
+                "assets_total_effective": assets_total_effective,
+                "home_decision": s.get("home_decision",""),
+                "rm_plan": s.get("rm_plan",""),
+            },
+            "request": "Suggest 3 concrete options with pros/cons and a first step."
+        }
+        st.text_area("Prompt that would be sent", value=json.dumps(preview, indent=2), height=200, key="pfma_prompt_v2")
+        if st.button("Send to AI Agent (mock)", key="pfma_send_v2"):
+            opener = f"I see total monthly income {_m(income_total)} and costs {_m(monthly_costs_total)}. "
+            if gap <= 0:
+                opener += f"You have a monthly surplus of {_m(-gap)}."
+            else:
+                if years or rem:
+                    opener += f"You have a monthly gap of {_m(gap)}. Effective assets {_m(assets_total_effective)} cover about {years}y {rem}m at current spend."
+                else:
+                    opener += f"You have a monthly gap of {_m(gap)}."
+            st.success("Mock handoff created.")
+            st.write("**Agent:** " + opener)
+        st.caption("Mock only — nothing leaves your browser.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ---- PFMA tools shim (safe, non-recursive) ----
+def _render_tools_fallback():
+    """
+    Safe wrapper: try v2; if missing, try legacy; otherwise show a friendly note.
+    Never recursive; never raises on missing symbols.
+    """
+    try:
+        _render_pfma_tools_block()
+    except NameError:
+        _legacy = globals().get("_render_tools_pfma")
+        if callable(_legacy):
+            try:
+                _legacy()
+            except Exception as e:
+                st.warning(f"Tools section unavailable: {e}")
+        else:
+            st.info("Tools section unavailable in this build.")
+
+# Define alias only if needed
+if "_render_tools_pfma" in globals() and callable(globals()["_render_tools_pfma"]):
+    _render_pfma_tools_block = globals()["_render_tools_pfma"]
 
 # ---------------- Utilities ----------------
 def reset_all():
@@ -169,7 +249,8 @@ def reset_all():
 
 def _is_intlike(x) -> bool:
     try:
-        int(str(x)); return True
+        int(str(x))
+        return True
     except Exception:
         return False
 
@@ -197,8 +278,10 @@ def radio_from_answer_map(label, amap, *, key, default_key=None) -> str | None:
     return keys[labels.index(sel_label)]
 
 def money(n: int | float) -> str:
-    try: return f"${int(round(float(n))):,}"
-    except Exception: return "$0"
+    try:
+        return f"${int(round(float(n))):,}"
+    except Exception:
+        return "$0"
 
 # ---------------- PFMA Utilities ----------------
 def _merge_conditions_from_cost_planner() -> dict[str, list[str]]:
@@ -302,12 +385,14 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
 def render_pfma():
     st.header("Plan for My Advisor")
     st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
-
+    # Reset guard so tools render once per run
+    st.session_state["_pfma_tools_rendered"] = False
+    with st.expander("Tools & AI Agent", expanded=True):
+        _render_pfma_tools_block()
     s = st.session_state
     people = s.get("people", [])
     recs = s.get("planner_results", {})
     overrides = s.get("care_overrides", {})
-
     with st.expander("Your current plan summary", expanded=True):
         if people and recs:
             nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
@@ -323,7 +408,6 @@ def render_pfma():
             st.write(f"**Estimated current monthly care total:** {money(total)}")
         else:
             st.info("No Cost Planner data yet.")
-
     # Booking section
     st.subheader("Get Connected to Expert Advice")
     if "pfma_defaults_applied" not in s:
@@ -338,7 +422,6 @@ def render_pfma():
         s.pfma_referral_name = ""
         s.pfma_booked = False
         s.pfma_defaults_applied = True
-
     c1, c2 = st.columns(2)
     with c1:
         st.text_input("Your name", key="pfma_name", placeholder="E.g., Taylor Morgan")
@@ -475,9 +558,9 @@ def render_pfma():
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Care Plan Confirmer badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Confirm Cost Planner", expanded=s.get("expander_pfma_conditions", False)):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
@@ -510,9 +593,9 @@ def render_pfma():
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Care Needs & Daily Support", expanded=s.get("expander_pfma_symptoms", False)):
         st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
         for p in people:
@@ -588,9 +671,9 @@ def render_pfma():
                 s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
                 s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Care Needs Expert badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Care Preferences", expanded=s.get("expander_pfma_settings", False)):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
         for p in people:
@@ -637,9 +720,9 @@ def render_pfma():
                 s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
                 s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Preferences Pro badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Household & Legal Basics", expanded=s.get("expander_pfma_marital", False)):
         st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
         for p in people:
@@ -691,9 +774,9 @@ def render_pfma():
                 s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
                 s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Household Hero badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Benefits & Coverage", expanded=s.get("expander_pfma_ltc", False)):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
@@ -734,9 +817,9 @@ def render_pfma():
                 "has_va": s.get("pfma_va", False),
                 "medicaid_interest": s.get("pfma_medicaid", False),
             })
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Benefits Boss badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun() # Explicit rerun to ensure UI updates
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information", expanded=s.get("expander_pfma_name_confirm", False)):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
@@ -753,9 +836,9 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
                 st.success("You just earned the Personal Info Star badge! Keep going!")
-                st.rerun()  # Explicit rerun to ensure UI updates
+                st.rerun() # Explicit rerun to ensure UI updates
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save", type="primary"):
         s.pfma_optional = {
@@ -1007,7 +1090,7 @@ elif st.session_state.step == "household":
         except Exception:
             st.error("Household drawers failed."); st.code(traceback.format_exc()); result = None
         if result is not None and hasattr(result, "as_dict"):
-            with st.expander("Details (for debugging)", expanded=False):
+            with st.expander("Details (for debugging", expanded=False):
                 st.json(result.as_dict())
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -1020,6 +1103,85 @@ elif st.session_state.step == "household":
         if st.button("Finish", key="hh_finish"):
             st.session_state.step = "intro"; st.rerun()
 elif st.session_state.step == "breakdown":
-    render_breakdown_financial_picture()
+    st.header("Detailed Breakdown")
+    s = st.session_state
+    people = s.get("people", [])
+    person_costs: dict = s.get("person_costs", {})
+    st.subheader("Care Costs by Person")
+    care_rows = []; care_total = 0
+    for p in people:
+        pid = p["id"]; name = p["display_name"]
+        rec = s.get("planner_results", {}).get(pid, None)
+        default_care = getattr(rec, "care_type", None) if rec else None
+        scenario = s.get("care_overrides", {}).get(pid, default_care) or "none"
+        cost = int(person_costs.get(pid, 0))
+        def pick(base): return s.get(f"{base}_{pid}") or s.get(base) or "—"
+        if scenario == "assisted_living":
+            cond = s.get(f"al_conditions_saved_{pid}", s.get("al_conditions"))
+            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
+            detail = ", ".join([f"Care: {pick('al_care_level')}", f"Room: {pick('al_room_type')}", f"Mobility: {pick('al_mobility')}", f"Conditions: {cond_str}"])
+        elif scenario == "memory_care":
+            cond = s.get(f"mc_conditions_saved_{pid}", s.get("mc_conditions"))
+            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
+            detail = ", ".join([f"Care: {pick('mc_level')}", f"Mobility: {pick('mc_mobility')}", f"Conditions: {cond_str}"])
+        elif scenario == "in_home":
+            hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
+            ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
+            cond = s.get(f"ih_conditions_saved_{pid}", s.get("ih_conditions"))
+            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
+            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}, Conditions: {cond_str}"
+        else:
+            detail = "—"
+        care_rows.append({"Person": name, "Scenario": scenario.replace('_',' ').title(), "Details": detail, "Monthly Cost": money(cost)})
+        care_total += cost
+    if care_rows: st.table(care_rows)
+    else: st.info("No care costs yet. Choose a scenario in the Cost Planner.")
+    st.subheader("Additional Monthly Costs (Selected)")
+    home_monthly = int(s.get("home_monthly_total", 0))
+    mods_monthly = int(s.get("mods_monthly_total", 0))
+    other_monthly = int(s.get("other_monthly_total", 0))
+    addl_total = home_monthly + mods_monthly + other_monthly
+    st.table([
+        {"Category":"Home decisions", "Monthly":money(home_monthly)},
+        {"Category":"Home modifications", "Monthly":money(mods_monthly)},
+        {"Category":"Other monthly costs", "Monthly":money(other_monthly)},
+        {"Category":"Subtotal (additional)", "Monthly":money(addl_total)},
+    ])
+    st.subheader("Monthly Income")
+    inc_A = int(s.get("a_ss",0)) + int(s.get("a_pn",0)) + int(s.get("a_other",0))
+    inc_B = int(s.get("b_ss",0)) + int(s.get("b_pn",0)) + int(s.get("b_other",0))
+    inc_house = int(s.get("hh_rent",0)) + int(s.get("hh_annuity",0)) + int(s.get("hh_invest",0)) + int(s.get("hh_trust",0)) + int(s.get("hh_other",0))
+    va_A = int(s.get("a_va_monthly",0)); va_B = int(s.get("b_va_monthly",0))
+    income_total = inc_A + inc_B + inc_house + va_A + va_B
+    st.table([
+        {"Source":"Individual A (SS + Pension + Other)","Monthly":money(inc_A)},
+        {"Source":"Individual B (SS + Pension + Other)","Monthly":money(inc_B)},
+        {"Source":"Household / Shared (rent, annuity, investments, trust, other)","Monthly":money(inc_house)},
+        {"Source":"VA — A","Monthly":money(va_A)},
+        {"Source":"VA — B","Monthly":money(va_B)},
+        {"Source":"Total Income","Monthly":money(income_total)},
+    ])
+    st.subheader("Totals")
+    monthly_need = care_total + addl_total
+    gap = monthly_need - income_total
+    assets_common = int(s.get("assets_common_total", 0))
+    assets_detail = int(s.get("assets_detailed_total", 0))
+    assets_total = assets_common + assets_detail
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Monthly Care + Selected Costs", money(monthly_need))
+    col2.metric("Total Monthly Income (incl. VA)", money(income_total))
+    col3.metric("Estimated Monthly Gap", money(gap))
+    if gap > 0 and assets_total > 0:
+        months = int(assets_total // max(gap, 1)); years = months // 12; rem = months % 12
+        msg = f"Estimated runway from assets: {years} years, {rem} months" if years > 0 else f"Estimated runway from assets: {rem} months"
+    else:
+        msg = "Estimated runway from assets: 0 months"
+    st.subheader(msg)
+    st.divider()
+    cta1, cta2 = st.columns(2)
+    with cta1:
+        if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
+    with cta2:
+        if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "pfma":
     render_pfma()
