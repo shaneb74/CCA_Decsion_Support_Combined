@@ -203,14 +203,21 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
             index=["None", "Walker", "Wheelchair"].index(seeds["mobility"]),
             key=f"{pid}_ih_mobility",
         )
-    chronic = st.selectbox(
-        f"{name} • Chronic condition",
-        ["None", "Diabetes", "Parkinson's", "Complex"],
-        index=["None", "Diabetes", "Parkinson's", "Complex"].index(seeds["chronic_single"]),
-        key=f"{pid}_ih_chronic",
+    default_conditions = st.session_state.get(f"ih_conditions_saved_{pid}", [])
+    if default_conditions is None:
+        default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
+    ih_conditions = st.multiselect(
+        f"{name} • Chronic conditions",
+        CONDITION_OPTIONS,
+        default=default_conditions,
+        format_func=format_condition_label,
+        key=f"ih_conditions_{pid}",
+        max_selections=5,
     )
-    if chronic in ("Diabetes", "Parkinson's"):
-        _union_into_canon([chronic])
+    ih_chronic_for_engine = _derive_chronic_for_engine(ih_conditions)
+    st.session_state[f"{pid}_ih_chronic"] = ih_chronic_for_engine
+    _record_personal_copy(pid, ih_conditions, "ih")
+    _union_into_canon(ih_conditions)
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
