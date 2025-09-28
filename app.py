@@ -374,7 +374,7 @@ def render_pfma():
             derived = _derive_adls_and_others(pid)
             st.multiselect(
                 f"Symptoms or behaviors for {name}",
-                ["Wandering", "Aggression", "Other"],
+                ["Wandering", "Aggression", "Elopement", "Exit-seeking", "Confusion", "Agitation", "Other"],
                 key=f"pfma_symptoms_{pid}",
                 help="E.g., wandering at night can affect care needs"
             )
@@ -556,12 +556,17 @@ def render_pfma():
             key="pfma_primary_payer",
             help="This helps your advisor explore funding options, even if most payers don’t cover senior living"
         )
-        if s.get("pfma_primary_payer") in ("Long-term care insurance", "Other / mixed"):
+        st.selectbox(
+            "Health care insurance company (optional)",
+            ["Humana", "Aetna", "United Healthcare", "Cigna", "Blue Cross Blue Shield", "Other"],
+            key="pfma_insurance_company",
+            help="This helps your advisor understand your coverage"
+        )
+        if s.get("pfma_insurance_company") == "Other":
             st.text_input(
-                "Health care insurance company (optional)",
-                key="pfma_insurance_company",
-                placeholder="E.g., Humana, Aetna, United Healthcare",
-                help="This helps your advisor understand your coverage"
+                "Specify other insurance company",
+                key="pfma_insurance_company_other",
+                placeholder="E.g., Kaiser Permanente"
             )
         st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False), help="Check if you have an LTC policy")
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
@@ -571,7 +576,7 @@ def render_pfma():
             s.pfma_optional.update({
                 "budget": s.get("pfma_budget", ""),
                 "primary_payer": s.get("pfma_primary_payer", ""),
-                "insurance_company": s.get("pfma_insurance_company", ""),
+                "insurance_company": s.get("pfma_insurance_company_other", s.get("pfma_insurance_company", "")),
                 "has_ltc": s.get("pfma_ltc", False),
                 "has_va": s.get("pfma_va", False),
                 "medicaid_interest": s.get("pfma_medicaid", False),
@@ -626,7 +631,7 @@ def render_pfma():
             "poa_name": s.get("pfma_poa_name", {}),
             "budget": s.get("pfma_budget", ""),
             "primary_payer": s.get("pfma_primary_payer", ""),
-            "insurance_company": s.get("pfma_insurance_company", ""),
+            "insurance_company": s.get("pfma_insurance_company_other", s.get("pfma_insurance_company", "")),
             "has_ltc": s.get("pfma_ltc", False),
             "has_va": s.get("pfma_va", False),
             "medicaid_interest": s.get("pfma_medicaid", False),
