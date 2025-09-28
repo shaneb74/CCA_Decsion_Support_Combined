@@ -15,7 +15,7 @@ from cost_controls import (
 # Feature flag for gamification
 ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lower() in {"true", "1", "yes"}
 
-st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="centered")
+st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="wide")
 
 ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
