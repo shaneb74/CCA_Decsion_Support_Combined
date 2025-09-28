@@ -1,31 +1,24 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-def _pfma_card_css_expanders():
+# ---- PFMA tools compatibility shim (safe, read-only) ----
+def _pfma_tools_shim():
     try:
-        st.markdown(
-            """
-            <style>
-            /* PFMA card expanders */
-            details[data-testid="stExpander"].pfma-card { 
-                border: 1px solid #e5e7eb; 
-                border-radius: 12px; 
-                background: #fafafa; 
-                box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-                margin-bottom: 16px;
-            }
-            details[data-testid="stExpander"].pfma-card > summary { 
-                display: none; /* hide the summary line to look like a plain card */
-            }
-            details[data-testid="stExpander"].pfma-card > div {
-                padding: 16px 18px;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-    except Exception:
-        pass
+        if "_render_pfma_tools_block" in globals():
+            # If the canonical function exists, just call it
+            return _render_pfma_tools_block()
+        if "_render_tools_pfma" in globals():
+            # Backward-compatible name used in some builds
+            return _render_tools_pfma()
+        # If neither exists, show a soft warning (won't crash the page)
+        st.info("PFMA tools are not available in this build.")
+    except Exception as _e:
+        st.warning(f"Tools section unavailable: {_e}")
+
+# Ensure the name used at the call site always resolves
+if "_render_pfma_tools_block" not in globals():
+    def _render_pfma_tools_block():
+        _pfma_tools_shim()
 
 
 import json
@@ -231,7 +224,6 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
 
 # ---------------- PFMA render ----------------
 def render_pfma():
-    _render_pfma_tools_block()
     st.header("Plan for My Advisor")
     st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
 
