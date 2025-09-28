@@ -369,11 +369,12 @@ def render_pfma():
                 key=f"pfma_adls_{pid}",
             )
         if st.button("Confirm Guided Care Plan", key="pfma_guided_confirm", type="primary"):
+            s.pfma_confirmed_sections["pfma_care_type"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            s.pfma_confirmed_sections["pfma_care_type"] = True
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
             st.success("You just earned the Care Plan Confirmer badge! Keep going!")
             st.rerun()
     with st.expander("Confirm Cost Planner", expanded=s.get("expander_pfma_conditions", False)):
@@ -401,13 +402,14 @@ def render_pfma():
                 key=f"pfma_mobility_{pid}",
             )
         if st.button("Confirm Cost Planner", key="pfma_cost_confirm", type="primary"):
+            s.pfma_confirmed_sections["pfma_conditions"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_conditions = {**s.get("pfma_conditions", {}), pid: s[f"pfma_conditions_{pid}"]}
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            s.pfma_confirmed_sections["pfma_conditions"] = True
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
             st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
             st.rerun()
     with st.expander("Care Needs & Daily Support", expanded=s.get("expander_pfma_symptoms", False)):
@@ -473,6 +475,7 @@ def render_pfma():
                 help="Sleep patterns guide nighttime care"
             )
         if st.button("Confirm Care Needs & Daily Support", key="pfma_needs_confirm", type="primary"):
+            s.pfma_confirmed_sections["pfma_symptoms"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_symptoms = {**s.get("pfma_symptoms", {}), pid: s[f"pfma_symptoms_{pid}"]}
@@ -484,7 +487,7 @@ def render_pfma():
                 s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
                 s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
-            s.pfma_confirmed_sections["pfma_symptoms"] = True
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
             st.success("You just earned the Care Needs Expert badge! Keep going!")
             st.rerun()
     with st.expander("Care Preferences", expanded=s.get("expander_pfma_settings", False)):
@@ -524,6 +527,7 @@ def render_pfma():
                 help="This narrows down care locations"
             )
         if st.button("Confirm Care Preferences", key="pfma_preferences_confirm", type="primary"):
+            s.pfma_confirmed_sections["pfma_settings"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_settings = {**s.get("pfma_settings", {}), pid: s[f"pfma_settings_{pid}"]}
@@ -532,7 +536,7 @@ def render_pfma():
                 s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
                 s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
-            s.pfma_confirmed_sections["pfma_settings"] = True
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
             st.success("You just earned the Preferences Pro badge! Keep going!")
             st.rerun()
     with st.expander("Household & Legal Basics", expanded=s.get("expander_pfma_marital", False)):
@@ -577,6 +581,7 @@ def render_pfma():
                     help="Provide the name of your POA/DPOA"
                 )
         if st.button("Confirm Household & Legal Basics", key="pfma_household_confirm", type="primary"):
+            s.pfma_confirmed_sections["pfma_marital"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_marital = {**s.get("pfma_marital", {}), pid: s[f"pfma_marital_{pid}"]}
@@ -585,7 +590,7 @@ def render_pfma():
                 s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
                 s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
-            s.pfma_confirmed_sections["pfma_marital"] = True
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
             st.success("You just earned the Household Hero badge! Keep going!")
             st.rerun()
     with st.expander("Benefits & Coverage", expanded=s.get("expander_pfma_ltc", False)):
@@ -618,15 +623,17 @@ def render_pfma():
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
         st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", help="Check if you’re interested in Medicaid support")
         if st.button("Confirm Benefits & Coverage", key="pfma_benefits_confirm", type="primary"):
-            for p in people:
-                pid = p["id"]
-                s.pfma_budget = {**s.get("pfma_budget", {}), pid: s[f"pfma_budget_{pid}"]}
-                s.pfma_primary_payer = {**s.get("pfma_primary_payer", {}), pid: s[f"pfma_primary_payer_{pid}"]}
-                s.pfma_insurance_company = {**s.get("pfma_insurance_company", {}), pid: s[f"pfma_insurance_company_{pid}"]}
-                s.pfma_ltc = {**s.get("pfma_ltc", {}), pid: s[f"pfma_ltc_{pid}"]}
-                s.pfma_va = {**s.get("pfma_va", {}), pid: s[f"pfma_va_{pid}"]}
-                s.pfma_medicaid = {**s.get("pfma_medicaid", {}), pid: s[f"pfma_medicaid_{pid}"]}
             s.pfma_confirmed_sections["pfma_ltc"] = True
+            s.pfma_optional = s.get("pfma_optional", {})
+            s.pfma_optional.update({
+                "budget": s.get("pfma_budget", ""),
+                "primary_payer": s.get("pfma_primary_payer", ""),
+                "insurance_company": s.get("pfma_insurance_company_other", s.get("pfma_insurance_company", "")),
+                "has_ltc": s.get("pfma_ltc", False),
+                "has_va": s.get("pfma_va", False),
+                "medicaid_interest": s.get("pfma_medicaid", False),
+            })
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
             st.success("You just earned the Benefits Boss badge! Keep going!")
             st.rerun()
     if s.get("pfma_relationship") == "Self":
@@ -637,6 +644,7 @@ def render_pfma():
             st.text_input("Email (optional)", key="pfma_email_confirm", value=s.get("pfma_email", ""), placeholder="E.g., taylor@example.com", help="Optional for email communication")
             st.text_input("Referral name (optional)", key="pfma_referral_name_confirm", value=s.get("pfma_referral_name", ""), placeholder="E.g., doctor, friend, or organization", help="Who referred you to us?")
             if st.button("Confirm Personal Information", key="pfma_personal_confirm", type="primary"):
+                s.pfma_confirmed_sections["pfma_name_confirm"] = True
                 s.pfma_optional = s.get("pfma_optional", {})
                 s.pfma_optional.update({
                     "confirmed_name": s.get("pfma_name_confirm", ""),
@@ -644,7 +652,7 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                s.pfma_confirmed_sections["pfma_name_confirm"] = True
+                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
                 st.success("You just earned the Personal Info Star badge! Keep going!")
                 st.rerun()
     st.divider()
@@ -955,6 +963,46 @@ elif st.session_state.step == "breakdown":
         {"Category":"Other monthly costs", "Monthly":money(other_monthly)},
         {"Category":"Subtotal (additional)", "Monthly":money(addl_total)},
     ])
+    # Monthly Costs Bar Chart
+    st.subheader("Monthly Costs Breakdown")
+    monthly_costs_data = [
+        {"label": "Care Costs", "value": care_total},
+        {"label": "Home Decisions", "value": home_monthly},
+        {"label": "Home Modifications", "value": mods_monthly},
+        {"label": "Other Monthly Costs", "value": other_monthly},
+    ]
+    if any(item["value"] > 0 for item in monthly_costs_data):
+        ```chartjs
+        {
+            "type": "bar",
+            "data": {
+                "labels": ["Care Costs", "Home Decisions", "Home Modifications", "Other Monthly"],
+                "datasets": [{
+                    "label": "Monthly Costs ($)",
+                    "data": [${care_total}, ${home_monthly}, ${mods_monthly}, ${other_monthly}],
+                    "backgroundColor": ["#4CAF50", "#2196F3", "#FF9800", "#F44336"],
+                    "borderColor": ["#388E3C", "#1976D2", "#F57C00", "#D32F2F"],
+                    "borderWidth": 1
+                }]
+            },
+            "options": {
+                "scales": {
+                    "y": {
+                        "beginAtZero": true,
+                        "title": { "display": true, "text": "Amount ($)" }
+                    },
+                    "x": {
+                        "title": { "display": true, "text": "Cost Category" }
+                    }
+                },
+                "plugins": {
+                    "legend": { "display": false }
+                }
+            }
+        }
+        ```
+    else:
+        st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
     inc_A = int(s.get("a_ss",0)) + int(s.get("a_pn",0)) + int(s.get("a_other",0))
     inc_B = int(s.get("b_ss",0)) + int(s.get("b_pn",0)) + int(s.get("b_other",0))
@@ -969,12 +1017,84 @@ elif st.session_state.step == "breakdown":
         {"Source":"VA — B","Monthly":money(va_B)},
         {"Source":"Total Income","Monthly":money(income_total)},
     ])
+    # Income Sources Pie Chart
+    st.subheader("Income Sources Breakdown")
+    income_data = [
+        {"label": "Individual A", "value": inc_A},
+        {"label": "Individual B", "value": inc_B},
+        {"label": "Household", "value": inc_house},
+        {"label": "VA A", "value": va_A},
+        {"label": "VA B", "value": va_B},
+    ]
+    income_data = [item for item in income_data if item["value"] > 0]
+    if income_data:
+        ```chartjs
+        {
+            "type": "pie",
+            "data": {
+                "labels": [${",".join(f'"{item["label"]}"' for item in income_data)}],
+                "datasets": [{
+                    "data": [${",".join(str(item["value"]) for item in income_data)}],
+                    "backgroundColor": ["#4CAF50", "#2196F3", "#FF9800", "#F44336", "#9C27B0"],
+                    "borderColor": ["#388E3C", "#1976D2", "#F57C00", "#D32F2F", "#7B1FA2"],
+                    "borderWidth": 1
+                }]
+            },
+            "options": {
+                "plugins": {
+                    "legend": { "position": "right" },
+                    "title": { "display": true, "text": "Income Sources ($)" }
+                }
+            }
+        }
+        ```
+    else:
+        st.info("No income sources entered yet.")
+    st.subheader("Assets")
+    assets_common = int(s.get("assets_common_total", 0))
+    assets_detail = int(s.get("assets_detailed_total", 0))
+    home_sale_proceeds = int(s.get("home_sale_net_proceeds", 0))
+    assets_total = assets_common + assets_detail + home_sale_proceeds
+    st.table([
+        {"Category": "Common Assets", "Amount": money(assets_common)},
+        {"Category": "Detailed Assets", "Amount": money(assets_detail)},
+        {"Category": "Home Sale Proceeds", "Amount": money(home_sale_proceeds)},
+        {"Category": "Total Assets", "Amount": money(assets_total)},
+    ])
+    # Assets Pie Chart
+    st.subheader("Assets Breakdown")
+    assets_data = [
+        {"label": "Common Assets", "value": assets_common},
+        {"label": "Detailed Assets", "value": assets_detail},
+        {"label": "Home Sale Proceeds", "value": home_sale_proceeds},
+    ]
+    assets_data = [item for item in assets_data if item["value"] > 0]
+    if assets_data:
+        ```chartjs
+        {
+            "type": "pie",
+            "data": {
+                "labels": [${",".join(f'"{item["label"]}"' for item in assets_data)}],
+                "datasets": [{
+                    "data": [${",".join(str(item["value"]) for item in assets_data)}],
+                    "backgroundColor": ["#4CAF50", "#2196F3", "#FF9800"],
+                    "borderColor": ["#388E3C", "#1976D2", "#F57C00"],
+                    "borderWidth": 1
+                }]
+            },
+            "options": {
+                "plugins": {
+                    "legend": { "position": "right" },
+                    "title": { "display": true, "text": "Assets Breakdown ($)" }
+                }
+            }
+        }
+        ```
+    else:
+        st.info("No assets entered yet.")
     st.subheader("Totals")
     monthly_need = care_total + addl_total
     gap = monthly_need - income_total
-    assets_common = int(s.get("assets_common_total", 0))
-    assets_detail = int(s.get("assets_detailed_total", 0))
-    assets_total = assets_common + assets_detail
     col1, col2, col3 = st.columns(3)
     col1.metric("Monthly Care + Selected Costs", money(monthly_need))
     col2.metric("Total Monthly Income (incl. VA)", money(income_total))
@@ -988,10 +1108,8 @@ elif st.session_state.step == "breakdown":
     st.divider()
     cta1, cta2 = st.columns(2)
     with cta1:
-        if st.button("Back to Household", key="bd_back_house"):
-            st.session_state.step = "household"; st.rerun()
+        if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
     with cta2:
-        if st.button("Schedule with an Advisor", key="bd_pfma_btn"):
-            st.session_state.step = "pfma"; st.rerun()
+        if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "pfma":
     render_pfma()
