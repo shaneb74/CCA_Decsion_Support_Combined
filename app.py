@@ -999,7 +999,6 @@ elif st.session_state.step == "breakdown":
                 }
             }
         }
-        ```
     else:
         st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
