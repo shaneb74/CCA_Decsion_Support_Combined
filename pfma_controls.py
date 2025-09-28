@@ -1,8 +1,9 @@
 # pfma_controls.py — Plan for My Advisor (PFMA) question rendering and utilities
 from __future__ import annotations
+import os
 import streamlit as st
 
-# Feature flag for gamification (imported from app.py to avoid duplication)
+# Feature flag for gamification
 ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lower() in {"true", "1", "yes"}
 
 def _merge_conditions_from_cost_planner(condition_options: list[str]) -> dict[str, list[str]]:
