@@ -301,6 +301,4 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
         st.session_state.person_costs[pid] = int(monthly)
         combined += int(monthly)
         st.divider()
-    st.subheader("Combined Total")
-    st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
-    return combined
+    st.sub
