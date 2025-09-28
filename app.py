@@ -369,14 +369,13 @@ def render_pfma():
                 key=f"pfma_adls_{pid}",
             )
         if st.button("Confirm Guided Care Plan", key="pfma_guided_confirm", type="primary"):
-            s.pfma_confirmed_sections["pfma_care_type"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            s.pfma_confirmed_sections["pfma_care_type"] = True
             st.success("You just earned the Care Plan Confirmer badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun()
     with st.expander("Confirm Cost Planner", expanded=s.get("expander_pfma_conditions", False)):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
@@ -402,16 +401,15 @@ def render_pfma():
                 key=f"pfma_mobility_{pid}",
             )
         if st.button("Confirm Cost Planner", key="pfma_cost_confirm", type="primary"):
-            s.pfma_confirmed_sections["pfma_conditions"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_conditions = {**s.get("pfma_conditions", {}), pid: s[f"pfma_conditions_{pid}"]}
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            s.pfma_confirmed_sections["pfma_conditions"] = True
             st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun()
     with st.expander("Care Needs & Daily Support", expanded=s.get("expander_pfma_symptoms", False)):
         st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
         for p in people:
@@ -475,7 +473,6 @@ def render_pfma():
                 help="Sleep patterns guide nighttime care"
             )
         if st.button("Confirm Care Needs & Daily Support", key="pfma_needs_confirm", type="primary"):
-            s.pfma_confirmed_sections["pfma_symptoms"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_symptoms = {**s.get("pfma_symptoms", {}), pid: s[f"pfma_symptoms_{pid}"]}
@@ -487,9 +484,9 @@ def render_pfma():
                 s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
                 s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            s.pfma_confirmed_sections["pfma_symptoms"] = True
             st.success("You just earned the Care Needs Expert badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun()
     with st.expander("Care Preferences", expanded=s.get("expander_pfma_settings", False)):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
         for p in people:
@@ -527,7 +524,6 @@ def render_pfma():
                 help="This narrows down care locations"
             )
         if st.button("Confirm Care Preferences", key="pfma_preferences_confirm", type="primary"):
-            s.pfma_confirmed_sections["pfma_settings"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_settings = {**s.get("pfma_settings", {}), pid: s[f"pfma_settings_{pid}"]}
@@ -536,9 +532,9 @@ def render_pfma():
                 s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
                 s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            s.pfma_confirmed_sections["pfma_settings"] = True
             st.success("You just earned the Preferences Pro badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun()
     with st.expander("Household & Legal Basics", expanded=s.get("expander_pfma_marital", False)):
         st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
         for p in people:
@@ -581,7 +577,6 @@ def render_pfma():
                     help="Provide the name of your POA/DPOA"
                 )
         if st.button("Confirm Household & Legal Basics", key="pfma_household_confirm", type="primary"):
-            s.pfma_confirmed_sections["pfma_marital"] = True
             for p in people:
                 pid = p["id"]
                 s.pfma_marital = {**s.get("pfma_marital", {}), pid: s[f"pfma_marital_{pid}"]}
@@ -590,9 +585,9 @@ def render_pfma():
                 s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
                 s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+            s.pfma_confirmed_sections["pfma_marital"] = True
             st.success("You just earned the Household Hero badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun()
     with st.expander("Benefits & Coverage", expanded=s.get("expander_pfma_ltc", False)):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
@@ -623,19 +618,17 @@ def render_pfma():
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
         st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", help="Check if you’re interested in Medicaid support")
         if st.button("Confirm Benefits & Coverage", key="pfma_benefits_confirm", type="primary"):
+            for p in people:
+                pid = p["id"]
+                s.pfma_budget = {**s.get("pfma_budget", {}), pid: s[f"pfma_budget_{pid}"]}
+                s.pfma_primary_payer = {**s.get("pfma_primary_payer", {}), pid: s[f"pfma_primary_payer_{pid}"]}
+                s.pfma_insurance_company = {**s.get("pfma_insurance_company", {}), pid: s[f"pfma_insurance_company_{pid}"]}
+                s.pfma_ltc = {**s.get("pfma_ltc", {}), pid: s[f"pfma_ltc_{pid}"]}
+                s.pfma_va = {**s.get("pfma_va", {}), pid: s[f"pfma_va_{pid}"]}
+                s.pfma_medicaid = {**s.get("pfma_medicaid", {}), pid: s[f"pfma_medicaid_{pid}"]}
             s.pfma_confirmed_sections["pfma_ltc"] = True
-            s.pfma_optional = s.get("pfma_optional", {})
-            s.pfma_optional.update({
-                "budget": s.get("pfma_budget", ""),
-                "primary_payer": s.get("pfma_primary_payer", ""),
-                "insurance_company": s.get("pfma_insurance_company_other", s.get("pfma_insurance_company", "")),
-                "has_ltc": s.get("pfma_ltc", False),
-                "has_va": s.get("pfma_va", False),
-                "medicaid_interest": s.get("pfma_medicaid", False),
-            })
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Benefits Boss badge! Keep going!")
-            st.rerun()  # Explicit rerun to ensure UI updates
+            st.rerun()
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information", expanded=s.get("expander_pfma_name_confirm", False)):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
@@ -644,7 +637,6 @@ def render_pfma():
             st.text_input("Email (optional)", key="pfma_email_confirm", value=s.get("pfma_email", ""), placeholder="E.g., taylor@example.com", help="Optional for email communication")
             st.text_input("Referral name (optional)", key="pfma_referral_name_confirm", value=s.get("pfma_referral_name", ""), placeholder="E.g., doctor, friend, or organization", help="Who referred you to us?")
             if st.button("Confirm Personal Information", key="pfma_personal_confirm", type="primary"):
-                s.pfma_confirmed_sections["pfma_name_confirm"] = True
                 s.pfma_optional = s.get("pfma_optional", {})
                 s.pfma_optional.update({
                     "confirmed_name": s.get("pfma_name_confirm", ""),
@@ -652,9 +644,9 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
+                s.pfma_confirmed_sections["pfma_name_confirm"] = True
                 st.success("You just earned the Personal Info Star badge! Keep going!")
-                st.rerun()  # Explicit rerun to ensure UI updates
+                st.rerun()
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save", type="primary"):
         s.pfma_optional = {
@@ -996,8 +988,10 @@ elif st.session_state.step == "breakdown":
     st.divider()
     cta1, cta2 = st.columns(2)
     with cta1:
-        if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
+        if st.button("Back to Household", key="bd_back_house"):
+            st.session_state.step = "household"; st.rerun()
     with cta2:
-        if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
+        if st.button("Schedule with an Advisor", key="bd_pfma_btn"):
+            st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "pfma":
     render_pfma()
