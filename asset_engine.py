@@ -46,7 +46,9 @@ class HouseholdResult:
     # Assets
     assets_common_total: int
     assets_detailed_total: int
-    # Final assets rollup (applies proceeds and deducts mods upfront if selected)
+    # Liabilities
+    liabilities_total: int
+    # Final assets rollup (applies proceeds, deducts mods and liabilities if selected)
     assets_total_effective: int
 
     def as_dict(self) -> Dict[str, Any]:
@@ -62,311 +64,193 @@ class IncomeAssetsEngine:
         with st.expander("Monthly Income — Individual", expanded=True):
             if nameB:
                 a_ss, a_pn, a_oth = st.columns(3)
-                with a_ss: a1 = _money(f"Social Security — {nameA}", "a_ss", 0)
-                with a_pn: a2 = _money(f"Pension — {nameA}", "a_pn", 0)
-                with a_oth: a3 = _money(f"Other — {nameA}", "a_other", 0)
+                with a_ss: a1 = _money(f"Social Security — {nameA}", "a_ss", default=0)
+                with a_pn: a2 = _money(f"Pension — {nameA}", "a_pn", default=0)
+                with a_oth: a3 = _money(f"Other income — {nameA}", "a_other", default=0)
                 b_ss, b_pn, b_oth = st.columns(3)
-                with b_ss: b1 = _money(f"Social Security — {nameB}", "b_ss", 0)
-                with b_pn: b2 = _money(f"Pension — {nameB}", "b_pn", 0)
-                with b_oth: b3 = _money(f"Other — {nameB}", "b_other", 0)
+                with b_ss: b1 = _money(f"Social Security — {nameB}", "b_ss", default=0)
+                with b_pn: b2 = _money(f"Pension — {nameB}", "b_pn", default=0)
+                with b_oth: b3 = _money(f"Other income — {nameB}", "b_other", default=0)
+                return a1 + a2 + a3, b1 + b2 + b3
             else:
-                a1 = _money(f"Social Security — {nameA}", "a_ss", 0)
-                a2 = _money(f"Pension — {nameA}", "a_pn", 0)
-                a3 = _money(f"Other — {nameA}", "a_other", 0)
-                b1 = b2 = b3 = 0
-            indiv_A = a1 + a2 + a3
-            indiv_B = b1 + b2 + b3
-            st.metric("Subtotal — Individual income", _fmt(indiv_A + indiv_B))
-        return indiv_A, indiv_B
+                a_ss, a_pn, a_oth = st.columns(3)
+                with a_ss: a1 = _money(f"Social Security — {nameA}", "a_ss", default=0)
+                with a_pn: a2 = _money(f"Pension — {nameA}", "a_pn", default=0)
+                with a_oth: a3 = _money(f"Other income — {nameA}", "a_other", default=0)
+                return a1 + a2 + a3, 0
 
     def _section_income_household(self):
-        with st.expander("Monthly Income — Household (shared)", expanded=False):
-            r   = _money("Rental income", "hh_rent", 0)
-            an  = _money("Annuity income", "hh_annuity", 0)
-            inv = _money("Dividends/interest (joint)", "hh_invest", 0)
-            tr  = _money("Trust distributions", "hh_trust", 0)
-            oth = _money("Other household income", "hh_other", 0)
-            subtotal = r + an + inv + tr + oth
-            st.metric("Subtotal — Household income", _fmt(subtotal))
-        return subtotal
+        with st.expander("Monthly Income — Household", expanded=True):
+            fields = [
+                ("Rental income", "hh_rent"),
+                ("Annuity income", "hh_annuity"),
+                ("Investment income", "hh_invest"),
+                ("Trust income", "hh_trust"),
+                ("Other household income", "hh_other"),
+            ]
+            total = 0
+            for label, key in fields:
+                total += _money(label, key, default=0)
+            return total
 
     def _section_benefits(self, names: List[str]):
-        """
-        Restored rich VA/A&A & LTC block:
-        - VA wizard or direct entry; stores a_va_monthly / b_va_monthly
-        - LTC Yes/No per person; stores has_ltc_insurance (True if either Yes)
-        - Uses calculator.settings['ltc_monthly_add'] as the LTC monthly add (default 1800)
-        """
-        with st.expander("Benefits (VA, Long-Term Care insurance)", expanded=True):
-            nA = names[0] if names else "Person A"
-            nB = names[1] if len(names) > 1 else None
-
-            # Settings seed
-            settings = getattr(self.calculator, "settings", {}) if self.calculator else {}
-            settings = settings or {}
-            if "va_mapr_2025" not in settings:
-                settings["va_mapr_2025"] = {
-                    "Veteran (no dependents) — A&A": 2358,
-                    "Veteran + 1 dependent — A&A": 2795,
-                    "Two veterans married, one A&A": 2795,
-                    "Surviving spouse — A&A": 1515,
-                    "Surviving spouse + 1 child — A&A": 1808,
-                }
-            if "ltc_monthly_add" not in settings:
-                settings["ltc_monthly_add"] = 1800
-            if self.calculator:
-                self.calculator.settings = settings
-
-            va_mapr = settings["va_mapr_2025"]
-            ltc_add_val = int(settings["ltc_monthly_add"])
-
-            def va_block(prefix: str, person_name: str) -> Dict[str, Any]:
-                st.write(f"**{person_name}**")
-                choice = st.radio(
-                    f"Choose an option for {person_name}:",
-                    [
-                        "Not a veteran / No VA pension",
-                        "I already receive or qualify for VA pension/Aid & Attendance",
-                        "I served, but I’m not sure if I qualify",
-                    ],
-                    index=0,
-                    key=f"{prefix}_va_path",
-                )
-                result = {"monthly": 0, "detail": "No VA pension"}
-
-                if choice.startswith("I already receive"):
-                    tier = st.selectbox(
-                        "Select status",
-                        list(va_mapr.keys()),
-                        key=f"{prefix}_va_tier",
-                        help="Monthly caps from VA MAPR. Enter your actual payment if you know it.",
-                    )
-                    cap = int(va_mapr[tier])
-                    st.caption(f"Estimated monthly cap for this tier: {_fmt(cap)}.")
-                    amt = st.number_input(
-                        "Monthly VA payment (enter actual if known; otherwise use cap)",
-                        min_value=0, step=25,
-                        value=int(st.session_state.get(f"{prefix}_va_actual", cap) or cap),
-                        key=f"{prefix}_va_actual",
-                    )
-                    result = {"monthly": int(amt), "detail": tier}
-
-                elif choice.startswith("I served"):
-                    st.info("Quick check (not exhaustive):")
-                    wartime   = st.checkbox("Served during a wartime period", key=f"{prefix}_wartime")
-                    age_dis   = st.checkbox("65+ or permanently and totally disabled", key=f"{prefix}_age_dis")
-                    discharge = st.checkbox("Discharge not dishonorable", key=f"{prefix}_discharge")
-                    need_aa   = st.checkbox("Needs help with daily activities or housebound", key=f"{prefix}_need_aa")
-                    networth  = st.checkbox("Net worth under VA limit", key=f"{prefix}_networth")
-
-                    likely = wartime and age_dis and discharge and networth
-                    if likely:
-                        st.success("You may qualify for VA pension; Aid & Attendance may apply if daily help/housebound.")
-                        result["detail"] = "Wizard: likely eligible"
-                    else:
-                        st.warning("Based on these answers, VA pension may not apply. You can still check with a local VSO.")
-                        result["detail"] = "Wizard: uncertain"
-
-                return result
-
-            # VA blocks
-            col1, col2 = st.columns(2)
-            with col1:
-                a_res = va_block("a", nA)
-            if nB:
-                with col2:
-                    b_res = va_block("b", nB)
+        with st.expander("Benefits", expanded=True):
+            va_options = [
+                "None",
+                "Veteran only (A&A)",
+                "Veteran with spouse (A&A)",
+                "Two veterans married, both A&A (household ceiling)",
+                "Surviving spouse (A&A)",
+            ]
+            va_values = {
+                "None": 0.0,
+                "Veteran only (A&A)": 2358.33,
+                "Veteran with spouse (A&A)": 2795.67,
+                "Two veterans married, both A&A (household ceiling)": 3740.50,
+                "Surviving spouse (A&A)": 1515.58,
+            }
+            ltc_add = 1800  # From settings
+            va_A = 0; va_B = 0; ltc_A = 0; ltc_B = 0
+            if len(names) > 1:
+                c1, c2 = st.columns(2)
+                with c1:
+                    va_A = va_values.get(st.selectbox(f"VA benefit — {names[0]}", va_options, key="a_va"), 0)
+                    ltc_A = ltc_add if st.checkbox(f"Long-term care insurance — {names[0]}", key="a_ltc") else 0
+                with c2:
+                    va_B = va_values.get(st.selectbox(f"VA benefit — {names[1]}", va_options, key="b_va"), 0)
+                    ltc_B = ltc_add if st.checkbox(f"Long-term care insurance — {names[1]}", key="b_ltc") else 0
             else:
-                b_res = {"monthly": 0, "detail": "No VA pension"}
-
-            # LTC flags per person
-            lc1, lc2 = st.columns(2)
-            with lc1:
-                a_ltc_choice = st.selectbox(
-                    f"Long-term care insurance — {nA}",
-                    ["No", "Yes"],
-                    key="a_ltc_choice",
-                )
-            if nB:
-                with lc2:
-                    b_ltc_choice = st.selectbox(
-                        f"Long-term care insurance — {nB}",
-                        ["No", "Yes"],
-                        key="b_ltc_choice",
-                    )
-            else:
-                b_ltc_choice = "No"
-                st.selectbox("Long-term care insurance — (n/a)", ["No"], key="b_ltc_choice_disabled", disabled=True)
-
-            # Persist VA monthly for PFMA & Breakdown consumers
-            a_va = int(a_res.get("monthly", 0))
-            b_va = int(b_res.get("monthly", 0)) if nB else 0
-            st.session_state["a_va_monthly"] = a_va
-            st.session_state["b_va_monthly"] = b_va
-
-            # Persist LTC flags for PFMA
-            has_ltc = (a_ltc_choice == "Yes") or (b_ltc_choice == "Yes")
-            st.session_state["has_ltc_insurance"] = bool(has_ltc)
-
-            # If you use an LTC add-on in affordability math, compute it (kept for compatibility)
-            a_ltc_add = ltc_add_val if a_ltc_choice == "Yes" else 0
-            b_ltc_add = ltc_add_val if (nB and b_ltc_choice == "Yes") else 0
-
-            benefits_total = a_va + b_va + a_ltc_add + b_ltc_add
-            st.caption("These flags feed the PFMA Benefits & coverage checkboxes.")
-            st.metric("Subtotal — Benefits (VA + LTC add-ons)", _fmt(benefits_total))
-
-        return a_va, b_va, a_ltc_add, b_ltc_add, benefits_total
+                va_A = va_values.get(st.selectbox(f"VA benefit — {names[0]}", va_options, key="a_va"), 0)
+                ltc_A = ltc_add if st.checkbox(f"Long-term care insurance — {names[0]}", key="a_ltc") else 0
+            # Validate VA eligibility
+            if va_A > 0 and "Veteran" not in st.session_state.get("pfma_marital", {}).get("A", "None"):
+                st.warning(f"VA benefit selected for {names[0]}, but marital status does not indicate veteran eligibility.")
+            if va_B > 0 and "Veteran" not in st.session_state.get("pfma_marital", {}).get("B", "None"):
+                st.warning(f"VA benefit selected for {names[1] if len(names) > 1 else names[0]}, but marital status does not indicate veteran eligibility.")
+            return int(va_A), int(va_B), int(ltc_A), int(ltc_B), int(va_A + va_B + ltc_A + ltc_B)
 
     def _section_home_decision(self):
-        with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=True):
-            decision = st.selectbox("What do you plan to do with the home?",
-                                    ["Keep", "Sell", "HELOC", "Reverse mortgage"],
-                                    key="home_decision")
-            apply_proceeds = st.checkbox("Apply net proceeds to assets summary", value=True, key="apply_proceeds_assets")
-
+        with st.expander("Home Decisions", expanded=True):
+            home_decision = st.radio(
+                "Home decision",
+                ["Stay in home", "Sell home", "Rent out home"],
+                key="home_decision",
+                help="This impacts monthly costs and available assets."
+            )
             home_monthly = 0
-            sale_proceeds = 0
-
-            if decision == "Keep":
-                c1, c2, c3 = st.columns(3)
-                with c1: mort = _money("Monthly mortgage/HELOC payment", "home_mort", 0)
-                with c2: tax  = _money("Monthly property taxes", "home_tax", 0)
-                with c3: ins  = _money("Monthly homeowners insurance", "home_ins", 0)
-                c4, c5 = st.columns(2)
-                with c4: hoa  = _money("Monthly HOA/maintenance", "home_hoa", 0)
-                with c5: util = _money("Monthly utilities (avg.)", "home_util", 0)
-                home_monthly = mort + tax + ins + hoa + util
-                st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
-
-            elif decision == "Sell":
-                c1, c2, c3 = st.columns(3)
-                with c1: sale = _money("Estimated sale price", "home_sale_price", 0, step=1000)
-                with c2: pay  = _money("Principal payoff at sale", "home_payoff", 0, step=1000)
-                with c3:
-                    fee = st.slider("Typical fees (realtor/closing) — percent", 4.0, 8.0, 6.0, 0.25, key="home_fee_pct")
-                    st.caption(f"You chose {fee:.2f}%")
-                fees_amt = int(round(sale * (fee / 100.0)))
-                sale_proceeds = max(0, sale - pay - fees_amt)
-                st.metric("Estimated net proceeds", _fmt(sale_proceeds))
-                st.metric("Subtotal — Home monthly costs", _fmt(0))
-
-            elif decision == "HELOC":
-                c1, c2, c3 = st.columns(3)
-                with c1: heloc = _money("Monthly HELOC payment", "home_heloc", 0)
-                with c2: tax   = _money("Monthly property taxes", "home_tax", 0)
-                with c3: ins   = _money("Monthly homeowners insurance", "home_ins", 0)
-                c4, c5 = st.columns(2)
-                with c4: hoa   = _money("Monthly HOA/maintenance", "home_hoa", 0)
-                with c5: util  = _money("Monthly utilities (avg.)", "home_util", 0)
-                home_monthly = heloc + tax + ins + hoa + util
-                st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
-
-            else:  # Reverse mortgage
-                c1, c2 = st.columns(2)
-                with c1: tax = _money("Monthly property taxes", "home_tax", 0)
-                with c2: ins = _money("Monthly homeowners insurance", "home_ins", 0)
-                c3, c4 = st.columns(2)
-                with c3: hoa  = _money("Monthly HOA/maintenance", "home_hoa", 0)
-                with c4: util = _money("Monthly utilities (avg.)", "home_util", 0)
-                home_monthly = tax + ins + hoa + util
-                st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
-
-        # Persist for Breakdown consumers
-        st.session_state["home_monthly_total"] = int(home_monthly)
-        st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
-        return int(home_monthly), int(sale_proceeds)
+            proceeds = 0
+            if home_decision == "Stay in home":
+                home_monthly += _money("Monthly mortgage or rent", "home_mortgage_rent", default=0)
+                home_monthly += _money("Property taxes (monthly)", "home_taxes", default=0)
+                home_monthly += _money("Home maintenance (monthly)", "home_maintenance", default=0)
+            elif home_decision == "Sell home":
+                home_value = _money("Home value (estimated)", "home_value", default=0)
+                mortgage_balance = _money("Remaining mortgage balance", "home_mortgage_balance", default=0)
+                closing_costs = _money("Closing costs (e.g., 6% of value)", "home_closing_costs", default=0)
+                proceeds = max(0, home_value - mortgage_balance - closing_costs)
+                st.session_state.home_sale_net_proceeds = proceeds
+            elif home_decision == "Rent out home":
+                home_monthly += _money("Monthly mortgage or management fees", "home_mortgage_management", default=0)
+                home_monthly += _money("Property taxes (monthly)", "home_taxes_rent", default=0)
+                home_monthly += _money("Home maintenance (monthly)", "home_maintenance_rent", default=0)
+                rental_income = _money("Rental income (monthly)", "home_rental_income", default=0)
+                st.session_state.hh_rent = rental_income
+            return home_monthly, proceeds
 
     def _section_mods(self):
-        with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=False):
-            pay_method = st.radio("Payment method", ["Amortize monthly", "Pay upfront (one-time)"],
-                                  index=0, key="mods_pay_method",
-                                  help="Choose whether to spread the cost over months or pay upfront.")
-            finish = st.selectbox("Finish level", ["Budget", "Standard", "Custom"], index=1,
-                                  help="Budget ≈ 0.8×, Standard = 1.0×, Custom ≈ 1.35×")
-            mult = {"Budget": 0.8, "Standard": 1.0, "Custom": 1.35}[finish]
-
-            items = [
-                ("mods_grab",        "Grab bars & railings (avg $800)",                800),
-                ("mods_door",        "Widen doorways (avg $2,500)",                    2500),
-                ("mods_shower",      "Bathroom walk-in shower conversion (avg $12,000)", 12000),
-                ("mods_ramp",        "Ramp installation (avg $3,500)",                 3500),
-                ("mods_stair",       "Stair lift (avg $4,500)",                        4500),
-                ("mods_sensors",     "Smart home monitoring/sensors (avg $1,200)",     1200),
-                ("mods_lighting",    "Lighting & fall-risk improvements (avg $1,500)", 1500),
+        with st.expander("Home Modifications", expanded=True):
+            mods = [
+                ("Grab bars and rails", "mod_grab_bars", 250),
+                ("Ramps", "mod_ramps", 1000),
+                ("Stair lifts", "mod_stair_lifts", 3000),
+                ("Bathroom modifications", "mod_bathroom", 2000),
             ]
-
-            total_cost = 0
-            colL, colR = st.columns(2)
-            for idx, (key, label, base) in enumerate(items):
-                target = colL if idx % 2 == 0 else colR
-                with target:
-                    checked = st.checkbox(label, key=f"{key}_chk", value=False)
-                    if checked:
-                        qty = st.number_input("Qty", min_value=1, step=1, value=1, key=f"{key}_qty")
-                        total_cost += int(base * mult * int(qty))
-
-            if pay_method == "Amortize monthly":
-                months = st.slider("Amortize over (months)", 6, 60, 12, 1, key="mods_months")
-                monthly = int(round(total_cost / max(1, months)))
-                st.session_state["mods_monthly_total"] = monthly
-                st.session_state["mods_upfront_total"] = 0
-                st.session_state["mods_deduct_assets"] = False
-                st.metric("Subtotal — Home mods (amortized monthly)", _fmt(monthly))
-            else:
-                st.session_state["mods_monthly_total"] = 0
-                st.session_state["mods_upfront_total"] = total_cost
-                deduct = st.checkbox("Deduct upfront cost from assets summary", value=True, key="mods_deduct_assets")
-                st.metric("Upfront cost — Home mods", _fmt(total_cost))
-
-        return int(st.session_state.get("mods_monthly_total", 0)), int(st.session_state.get("mods_upfront_total", 0)), bool(st.session_state.get("mods_deduct_assets", False))
+            monthly = 0
+            upfront = 0
+            for label, key, default in mods:
+                if st.checkbox(label, key=f"check_{key}"):
+                    cost = _money(f"{label} cost", key, default=default)
+                    if st.checkbox(f"Finance {label} monthly", key=f"finance_{key}"):
+                        monthly += cost // 12  # Simple annual-to-monthly conversion
+                    else:
+                        upfront += cost
+            mods_deduct = st.checkbox("Deduct upfront modifications from assets", key="mods_deduct_assets")
+            return monthly, upfront, mods_deduct
 
     def _section_other_monthlies(self):
-        with st.expander("Other monthly costs (meds, insurance, misc.)", expanded=False):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: meds   = _money("Medications", "oth_meds", 0)
-            with c2: med    = _money("Medicare/health insurance", "oth_med", 0)
-            with c3: dental = _money("Dental insurance", "oth_dent", 0)
-            with c4: other  = _money("Other recurring", "oth_other", 0)
-            subtotal = meds + med + dental + other
-            st.session_state["other_monthly_total"] = subtotal
-            st.metric("Subtotal — Other monthly costs", _fmt(subtotal))
-        return subtotal
+        with st.expander("Other Monthly Costs", expanded=True):
+            fields = [
+                ("Medical expenses", "optional_medical"),
+                ("Prescriptions", "optional_prescriptions"),
+                ("Phone & internet", "optional_phone_internet"),
+                ("Life insurance premiums", "optional_life_insurance"),
+                ("Transportation", "optional_transportation"),
+                ("Family travel", "optional_family_travel"),
+                ("Auto payment", "optional_auto"),
+                ("Auto insurance", "optional_auto_insurance"),
+                ("Other", "optional_other"),
+                ("HELOC payment (if any)", "heloc_payment_monthly"),
+            ]
+            total = 0
+            for label, key in fields:
+                total += _money(label, key, default=0)
+            return total
 
     def _section_assets_common(self):
-        with st.expander("Assets — Common", expanded=False):
-            cols = st.columns(3)
-            with cols[0]: checking = _money("Checking", "as_checking", 0, step=500)
-            with cols[1]: savings  = _money("Savings", "as_savings", 0, step=500)
-            with cols[2]: brokerage= _money("Brokerage (taxable)", "as_brokerage", 0, step=500)
-            cols = st.columns(3)
-            with cols[0]: cds      = _money("CDs / Money Market", "as_cds", 0, step=500)
-            with cols[1]: retire   = _money("Retirement (IRA/401k)", "as_retire", 0, step=500)
-            with cols[2]: hsa      = _money("HSA", "as_hsa", 0, step=500)
-            subtotal = checking + savings + brokerage + cds + retire + hsa
-            st.session_state["assets_common_total"] = subtotal
-            st.metric("Subtotal — Common assets", _fmt(subtotal))
-        return subtotal
+        with st.expander("Assets — Common", expanded=True):
+            fields = [
+                ("Cash and savings (checking, savings, MMAs)", "cash_savings"),
+                ("Brokerage (taxable) total", "brokerage_taxable"),
+                ("Traditional IRA balance", "ira_traditional"),
+                ("Roth IRA balance", "ira_roth"),
+                ("IRA total (if not using granular)", "ira_total"),
+                ("401(k) balance", "employer_401k"),
+                ("Home equity (net)", "home_equity"),
+                ("Annuities (surrender value)", "annuity_surrender"),
+            ]
+            total = 0
+            for label, key in fields:
+                total += _money(label, key, default=0)
+            return total
 
     def _section_assets_detailed(self):
-        with st.expander("Assets — Detailed", expanded=False):
-            cols = st.columns(3)
-            with cols[0]: annuities = _money("Annuities (current value)", "as_ann", 0, step=500)
-            with cols[1]: vehicles  = _money("Vehicles (equity)", "as_veh", 0, step=500)
-            with cols[2]: other     = _money("Other assets", "as_other_assets", 0, step=500)
-            subtotal = annuities + vehicles + other
-            st.session_state["assets_detailed_total"] = subtotal
-            st.metric("Subtotal — Detailed assets", _fmt(subtotal))
-        return subtotal
+        with st.expander("Assets — Detailed", expanded=True):
+            fields = [
+                ("Certificates of deposit (CDs)", "cds_balance"),
+                ("403(b) balance", "employer_403b"),
+                ("457(b) balance", "employer_457b"),
+                ("SEP IRA balance", "ira_sep"),
+                ("SIMPLE IRA balance", "ira_simple"),
+                ("Life insurance cash value", "life_cash_value"),
+                ("HSA balance", "hsa_balance"),
+                ("Other assets", "other_assets"),
+            ]
+            total = 0
+            for label, key in fields:
+                total += _money(label, key, default=0)
+            return total
 
-    # ---------- main render ----------
-    def render(self, people: list[dict]) -> HouseholdResult:
+    def _section_liabilities(self):
+        with st.expander("Liabilities", expanded=True):
+            fields = [
+                ("Mortgage balance (if not selling home)", "mortgage_balance"),
+                ("Credit card debt", "credit_card_debt"),
+                ("Personal loans", "personal_loans"),
+                ("Auto loans", "auto_loans"),
+                ("Other liabilities", "other_liabilities"),
+            ]
+            total = 0
+            for label, key in fields:
+                total += _money(label, key, default=0)
+            return total
+
+    def render(self, people: List[Dict[str, Any]]) -> Optional[HouseholdResult]:
         names = [p["display_name"] for p in people]
         nameA = names[0] if names else "Person A"
         nameB = names[1] if len(names) > 1 else None
 
         st.header("Household & Budget (optional)")
-        st.markdown("Add income, benefits, home decisions, assets, and other costs to see affordability.")
+        st.markdown("Add income, benefits, assets, home decisions, liabilities, and other costs to see affordability.")
 
         a_indiv, b_indiv = self._section_income_individual(nameA, nameB)
         hh_income = self._section_income_household()
@@ -376,9 +260,10 @@ class IncomeAssetsEngine:
         other_monthly = self._section_other_monthlies()
         assets_common = self._section_assets_common()
         assets_detail = self._section_assets_detailed()
+        liabilities_total = self._section_liabilities()
 
-        # Effective assets rollup (apply proceeds, deduct upfront mods optionally)
-        effective_assets = assets_common + assets_detail + int(st.session_state.get("home_sale_net_proceeds", 0))
+        # Effective assets rollup (apply proceeds, deduct mods and liabilities)
+        effective_assets = assets_common + assets_detail + sale_net - liabilities_total
         if mods_deduct:
             effective_assets -= mods_upfront
         if effective_assets < 0:
@@ -395,12 +280,13 @@ class IncomeAssetsEngine:
             ltc_add_B=ltc_B,
             benefits_total=benefits_total,
             home_monthly_total=home_monthly,
-            home_sale_net_proceeds=int(st.session_state.get("home_sale_net_proceeds", 0)),
+            home_sale_net_proceeds=sale_net,
             mods_monthly_total=mods_monthly,
             mods_upfront_total=mods_upfront,
             mods_deduct_assets=mods_deduct,
             other_monthly_total=other_monthly,
             assets_common_total=assets_common,
             assets_detailed_total=assets_detail,
+            liabilities_total=liabilities_total,
             assets_total_effective=effective_assets,
         )
