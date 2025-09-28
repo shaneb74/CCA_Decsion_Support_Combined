@@ -770,7 +770,7 @@ elif st.session_state.step == "audience":
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
         rel = {"Myself":"self","My spouse/partner":"spouse","My parent":"parent","Someone else":"other"}[role]
-        people.append({"id":"A","display_name":n,"relationship":"rel"})
+        people.append({"id":"A","display_name":n,"relationship":rel})
     if st.button("Continue", key="aud_continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
