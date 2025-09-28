@@ -298,8 +298,6 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
             monthly = _panel_in_home(pid, name, lf)
         else:
             monthly = 0
-        # Persist the selected scenario monthly for global math
-        st.session_state["care_monthly_total"] = int(monthly)
         st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
         st.session_state.person_costs[pid] = int(monthly)
         combined += int(monthly)

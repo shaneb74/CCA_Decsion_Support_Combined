@@ -8,7 +8,9 @@ import streamlit as st
 
 from cost_controls import (
 
+
 # --- Financial math helper (single source of truth) ---
+
 def _to_int(v, default=0):
     try:
         return int(v if v is not None and v != "" else default)
@@ -52,6 +54,7 @@ def compute_totals(s):
         "assets_common": assets_common, "assets_detail": assets_detail, "sale_proceeds": sale_proceeds, "mods_upfront": mods_upfront, "mods_deduct": mods_deduct, "assets_total_effective": assets_total_effective,
         "gap": gap, "months_runway": months_runway, "years": years, "rem": rem,
     }
+
 
     render_location_control,
     render_costs_for_active_recommendations,
@@ -1009,7 +1012,6 @@ elif st.session_state.step == "breakdown":
         {"Category":"Other monthly costs", "Monthly":money(other_monthly)},
         {"Category":"Subtotal (additional)", "Monthly":money(addl_total)},
     ])
-    # --- Clear subtotals & totals ---
     totals = compute_totals(st.session_state)
     money = lambda x: f"${int(x):,}"
 
@@ -1057,7 +1059,6 @@ elif st.session_state.step == "breakdown":
         else:
             st.warning("No assets entered to cover the monthly gap.")
     st.divider()
-
     cta1, cta2 = st.columns(2)
     with cta1:
         if st.button("Back to Household", key="bd_back_house"): st.session_state.step = "household"; st.rerun()
