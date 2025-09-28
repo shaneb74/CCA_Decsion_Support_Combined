@@ -6,7 +6,18 @@ from typing import Dict, Any, List
 import streamlit as st
 
 # ---- Single source of truth for location factors ----
-LOCATION_FACTORS = {
+# Load LOCATION_FACTORS from config if available, else fallback
+try:
+    import json, pathlib
+    _cfgp = pathlib.Path(__file__).parent / "config" / "pricing_config.json"
+    if _cfgp.exists():
+        _LOC_F = json.loads(_cfgp.read_text()).get("location_factors", {})
+    else:
+        _LOC_F = {}
+except Exception:
+    _LOC_F = {}
+
+LOCATION_FACTORS = _LOC_F or {
     "National": 1.00,
     "Washington": 1.15,
     "California": 1.25,
@@ -298,7 +309,6 @@ def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> in
             monthly = _panel_in_home(pid, name, lf)
         else:
             monthly = 0
-        st.session_state["care_monthly_total"] = int(monthly)
         st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
         st.session_state.person_costs[pid] = int(monthly)
         combined += int(monthly)

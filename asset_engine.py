@@ -274,6 +274,8 @@ class IncomeAssetsEngine:
 
         # Persist for Breakdown consumers
         st.session_state["home_monthly_total"] = int(home_monthly)
+        st.session_state["rm_lump_applied"] = int(locals().get("rm_lump_applied", 0))
+        st.session_state["rm_fees_oop_total"] = int(locals().get("rm_fees_oop_total", 0))
         st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
         return int(home_monthly), int(sale_proceeds)
 

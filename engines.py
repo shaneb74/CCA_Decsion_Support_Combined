@@ -14,6 +14,18 @@ ENGINE_STRICT_JSON = os.environ.get("ENGINE_STRICT_JSON", "false").lower() in {"
 
 SEVERITY_RANK = {"memory_care": 3, "assisted_living": 2, "in_home": 1, "none": 0}
 
+# Optional pricing config loader
+def _load_pricing_config():
+    try:
+        import json, pathlib
+        p = pathlib.Path(__file__).parent / "config" / "pricing_config.json"
+        if p.exists():
+            return json.loads(p.read_text())
+    except Exception:
+        pass
+    return None
+_PRICING = _load_pricing_config()
+
 @dataclass
 class PlannerResult:
     care_type: str
