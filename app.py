@@ -98,14 +98,15 @@ def _merge_conditions_from_cost_planner() -> dict[str, list[str]]:
     return merged
 
 def _derive_adls_and_others(pid: str) -> dict[str, any]:
-    """Map Guided Care Plan flags and Cost Planner data to ADLs, mental health, cognition, dietary, settings, and why."""
+    """Map Guided Care Plan flags and Cost Planner data to ADLs, mental health, cognition, dietary, settings, why, and mobility."""
     result = {
         "adls": [],
         "mental_health": "",
         "cognition": "Intact",
         "dietary": [],
         "settings": [],
-        "why": "Planning ahead"
+        "why": "Planning ahead",
+        "mobility": "None"
     }
     res = st.session_state.get("planner_results", {}).get(pid)
     flags = set(getattr(res, "flags", []) if res else [])
@@ -113,8 +114,12 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
     if "moderate_dependence" in flags or "high_dependence" in flags:
         result["adls"].extend(["Bathing", "Dressing", "Eating / meals"])
         result["why"] = "Care needs increased"
-    if "high_mobility_dependence" in flags or "moderate_mobility" in flags:
+    if "high_mobility_dependence" in flags:
         result["adls"].append("Transferring / mobility")
+        result["mobility"] = "Wheelchair"
+    elif "moderate_mobility" in flags:
+        result["adls"].append("Transferring / mobility")
+        result["mobility"] = "Walker"
     if "limited_support" in flags or "no_support" in flags:
         result["adls"].append("Companionship / safety checks")
     if "moderate_cognitive_decline" in flags or "severe_cognitive_risk" in flags:
@@ -158,6 +163,12 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
     # Why (additional checks)
     if "needs_financial_assistance" in flags:
         result["why"] = "Finances / affordability"
+    # Mobility from Cost Planner
+    for kind in ("al", "mc", "ih"):
+        mobility = st.session_state.get(f"{kind}_mobility_{pid}", st.session_state.get(f"{kind}_mobility"))
+        if mobility in ("None", "Walker", "Wheelchair"):
+            result["mobility"] = mobility
+            break
     return result
 
 # ---------------- PFMA render ----------------
@@ -272,27 +283,24 @@ def render_pfma():
     # Prefill chronic conditions as a dictionary per person
     if not s.get("pfma_conditions"):
         s.pfma_conditions = _merge_conditions_from_cost_planner()
+    # Initialize confirmed sections for gamification
+    if "pfma_confirmed_sections" not in s:
+        s.pfma_confirmed_sections = {}
     st.divider()
     st.subheader("Optional details for your advisor")
     st.caption("These optional details help your advisor prepare for your consultation, saving time and focusing on your care options. Complete as much as you’re comfortable with!")
     if ENABLE_PFMA_GAMIFICATION:
         optional_sections = [
-            {"key": "pfma_care_type", "label": "Confirm Guided Care Plan"},
-            {"key": "pfma_conditions", "label": "Confirm Cost Planner"},
-            {"key": "pfma_symptoms", "label": "Care Needs & Daily Support"},
-            {"key": "pfma_settings", "label": "Care Preferences"},
-            {"key": "pfma_marital", "label": "Household & Legal Basics"},
-            {"key": "pfma_ltc", "label": "Benefits & Coverage"},
-            {"key": "pfma_name_confirm", "label": "Personal Information"},
+            {"key": "pfma_care_type", "label": "Confirm Guided Care Plan", "badge": "Care Plan Confirmer 📋"},
+            {"key": "pfma_conditions", "label": "Confirm Cost Planner", "badge": "Cost Planner Confirmer 💡"},
+            {"key": "pfma_symptoms", "label": "Care Needs & Daily Support", "badge": "Care Needs Expert 🩺"},
+            {"key": "pfma_settings", "label": "Care Preferences", "badge": "Preferences Pro ⭐"},
+            {"key": "pfma_marital", "label": "Household & Legal Basics", "badge": "Household Hero 🏠"},
+            {"key": "pfma_ltc", "label": "Benefits & Coverage", "badge": "Benefits Boss 💰"},
+            {"key": "pfma_name_confirm", "label": "Personal Information", "badge": "Personal Info Star 🌟"},
         ]
-        filled_count = 0
+        filled_count = sum(1 for section in optional_sections if section["key"] in s.pfma_confirmed_sections and s.pfma_confirmed_sections[section["key"]])
         total_sections = 6 if s.get("pfma_relationship") != "Self" else 7
-        for section in optional_sections:
-            if section["key"] == "pfma_name_confirm" and s.get("pfma_relationship") != "Self":
-                continue
-            val = s.get(section["key"])
-            if val or (isinstance(val, (list, dict)) and len(val) > 0):
-                filled_count += 1
         progress = filled_count / total_sections
         st.progress(progress, text=f"Progress: {filled_count}/{total_sections} sections completed – You’re helping us tailor your care plan!")
     with st.expander("Confirm Guided Care Plan"):
@@ -324,7 +332,8 @@ def render_pfma():
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            st.success("Guided Care Plan confirmed!")
+                s.pfma_confirmed_sections["pfma_care_type"] = True
+            st.success("You just earned the Care Plan Confirmer badge! Keep going!")
     with st.expander("Confirm Cost Planner"):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
@@ -335,7 +344,6 @@ def render_pfma():
                 CONDITION_OPTIONS,
                 default=default_conditions,
                 key=f"pfma_conditions_{pid}",
-                on_change=lambda: st.rerun(),
             )
             if "Diabetes" in s.get(f"pfma_conditions_{pid}", []):
                 st.selectbox(
@@ -343,11 +351,11 @@ def render_pfma():
                     ["Oral meds", "Insulin", "Diet-controlled", "Other"],
                     key=f"pfma_diabetes_control_{pid}",
                 )
-            mobility = s.get(f"al_mobility_{pid}", s.get(f"mc_mobility_{pid}", s.get(f"ih_mobility_{pid}", "None")))
+            derived = _derive_adls_and_others(pid)
             st.selectbox(
                 f"Confirm mobility needs for {name}",
                 ["None", "Walker", "Wheelchair"],
-                index=["None", "Walker", "Wheelchair"].index(mobility if mobility in ["None", "Walker", "Wheelchair"] else "None"),
+                index=["None", "Walker", "Wheelchair"].index(derived["mobility"]),
                 key=f"pfma_mobility_{pid}",
             )
         if st.button("Confirm Cost Planner", key="pfma_cost_confirm"):
@@ -357,7 +365,8 @@ def render_pfma():
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            st.success("Cost Planner confirmed!")
+                s.pfma_confirmed_sections["pfma_conditions"] = True
+            st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
     with st.expander("Care Needs & Daily Support"):
         st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
         for p in people:
@@ -432,7 +441,8 @@ def render_pfma():
                 s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
                 s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
-            st.success("Care Needs confirmed!")
+                s.pfma_confirmed_sections["pfma_symptoms"] = True
+            st.success("You just earned the Care Needs Expert badge! Keep going!")
     with st.expander("Care Preferences"):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
         for p in people:
@@ -478,7 +488,8 @@ def render_pfma():
                 s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
                 s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
-            st.success("Care Preferences confirmed!")
+                s.pfma_confirmed_sections["pfma_settings"] = True
+            st.success("You just earned the Preferences Pro badge! Keep going!")
     with st.expander("Household & Legal Basics"):
         st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
         for p in people:
@@ -529,7 +540,8 @@ def render_pfma():
                 s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
                 s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
-            st.success("Household & Legal confirmed!")
+                s.pfma_confirmed_sections["pfma_marital"] = True
+            st.success("You just earned the Household Hero badge! Keep going!")
     with st.expander("Benefits & Coverage"):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
@@ -544,6 +556,13 @@ def render_pfma():
             key="pfma_primary_payer",
             help="This helps your advisor explore funding options, even if most payers don’t cover senior living"
         )
+        if s.get("pfma_primary_payer") in ("Long-term care insurance", "Other / mixed"):
+            st.text_input(
+                "Health care insurance company (optional)",
+                key="pfma_insurance_company",
+                placeholder="E.g., Humana, Aetna, United Healthcare",
+                help="This helps your advisor understand your coverage"
+            )
         st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False), help="Check if you have an LTC policy")
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
         st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", help="Check if you’re interested in Medicaid support")
@@ -552,11 +571,13 @@ def render_pfma():
             s.pfma_optional.update({
                 "budget": s.get("pfma_budget", ""),
                 "primary_payer": s.get("pfma_primary_payer", ""),
+                "insurance_company": s.get("pfma_insurance_company", ""),
                 "has_ltc": s.get("pfma_ltc", False),
                 "has_va": s.get("pfma_va", False),
                 "medicaid_interest": s.get("pfma_medicaid", False),
             })
-            st.success("Benefits & Coverage confirmed!")
+            s.pfma_confirmed_sections["pfma_ltc"] = True
+            st.success("You just earned the Benefits Boss badge! Keep going!")
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information"):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
@@ -572,7 +593,8 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                st.success("Personal Information confirmed!")
+                s.pfma_confirmed_sections["pfma_name_confirm"] = True
+                st.success("You just earned the Personal Info Star badge! Keep going!")
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save"):
         s.pfma_optional = {
@@ -604,6 +626,7 @@ def render_pfma():
             "poa_name": s.get("pfma_poa_name", {}),
             "budget": s.get("pfma_budget", ""),
             "primary_payer": s.get("pfma_primary_payer", ""),
+            "insurance_company": s.get("pfma_insurance_company", ""),
             "has_ltc": s.get("pfma_ltc", False),
             "has_va": s.get("pfma_va", False),
             "medicaid_interest": s.get("pfma_medicaid", False),
@@ -619,19 +642,19 @@ def render_pfma():
     if ENABLE_PFMA_GAMIFICATION:
         st.subheader("Your Badges 🎉")
         badges = []
-        if any(s.get(k) for k in ["pfma_care_type", "pfma_adls"]):
+        if "pfma_care_type" in s.pfma_confirmed_sections:
             badges.append(("Care Plan Confirmer 📋", "Awarded for confirming your care plan details!"))
-        if any(s.get(k) for k in ["pfma_conditions", "pfma_mobility", "pfma_diabetes_control"]):
+        if "pfma_conditions" in s.pfma_confirmed_sections:
             badges.append(("Cost Planner Confirmer 💡", "Thanks for verifying your health and mobility!"))
-        if any(s.get(k) for k in ["pfma_symptoms", "pfma_mental_health", "pfma_dietary", "pfma_cognition", "pfma_vision", "pfma_hearing", "pfma_weight", "pfma_incont", "pfma_sleep"]):
+        if "pfma_symptoms" in s.pfma_confirmed_sections:
             badges.append(("Care Needs Expert 🩺", "Great job sharing health and support needs!"))
-        if any(s.get(k) for k in ["pfma_settings", "pfma_why", "pfma_enjoys_children", "pfma_pets", "pfma_activities", "pfma_radius"]):
+        if "pfma_settings" in s.pfma_confirmed_sections:
             badges.append(("Preferences Pro ⭐", "Thanks for detailing your care preferences!"))
-        if any(s.get(k) for k in ["pfma_marital", "pfma_living_situation", "pfma_smoking", "pfma_alcohol", "pfma_poa_type", "pfma_poa_name"]):
+        if "pfma_marital" in s.pfma_confirmed_sections:
             badges.append(("Household Hero 🏠", "Awesome work on household and legal details!"))
-        if any(s.get(k) for k in ["pfma_budget", "pfma_primary_payer", "pfma_ltc", "pfma_va", "pfma_medicaid"]):
+        if "pfma_ltc" in s.pfma_confirmed_sections:
             badges.append(("Benefits Boss 💰", "Thanks for sharing budget and benefits info!"))
-        if s.get("pfma_relationship") == "Self" and any(s.get(k) for k in ["pfma_name_confirm", "pfma_phone_confirm", "pfma_email_confirm", "pfma_referral_name_confirm"]):
+        if s.get("pfma_relationship") == "Self" and "pfma_name_confirm" in s.pfma_confirmed_sections:
             badges.append(("Personal Info Star 🌟", "Great job confirming your contact details!"))
         if badges:
             cols = st.columns(len(badges))
