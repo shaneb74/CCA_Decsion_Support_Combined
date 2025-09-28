@@ -85,25 +85,18 @@ def _inputs_namespace(**kwargs) -> SimpleNamespace:
         setattr(ns, k, v)
     return ns
 
-def _union_into_canon(selected: List[str]) -> None:
-    """Update a canonical union of conditions across panels, without touching widget keys."""
+def _union_into_canon(selected: List[str], pid: str, kind: str) -> None:
+    """Update canonical conditions and per-person copy without touching widget keys."""
     try:
         current = list(st.session_state.get("canon_conditions", []))
     except Exception:
         current = []
-    # sanitize to known options
     valid = set(CONDITION_OPTIONS)
     for item in selected or []:
         if item in valid and item not in current:
             current.append(item)
     st.session_state["canon_conditions"] = current
-
-def _record_personal_copy(pid: str, selected: List[str], kind: str) -> None:
-    """
-    Store the per-person list without mutating the widget key directly.
-    We avoid writing to the widget's key (e.g., 'al_conditions_{pid}') to comply with Streamlit rules.
-    """
-    store_key = f"{kind}_conditions_saved_{pid}"  # e.g., al_conditions_saved_A
+    store_key = f"{kind}_conditions_saved_{pid}"
     st.session_state[store_key] = list(selected) if selected else []
 
 def format_condition_label(condition: str) -> str:
@@ -163,8 +156,7 @@ def _panel_assisted_living(pid: str, name: str, lf: float) -> int:
         )
         al_chronic_for_engine = _derive_chronic_for_engine(al_conditions)
         st.session_state[f"{pid}_al_chronic"] = al_chronic_for_engine
-        _record_personal_copy(pid, al_conditions, "al")
-        _union_into_canon(al_conditions)
+        _union_into_canon(al_conditions, pid, "al")
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
@@ -210,7 +202,7 @@ def _panel_in_home(pid: str, name: str, lf: float) -> int:
         key=f"{pid}_ih_chronic",
     )
     if chronic in ("Diabetes", "Parkinson's"):
-        _union_into_canon([chronic])
+        _union_into_canon([chronic], pid, "ih")
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
@@ -252,8 +244,7 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
         )
         mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
         st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
-        _record_personal_copy(pid, mc_conditions, "mc")
-        _union_into_canon(mc_conditions)
+        _union_into_canon(mc_conditions, pid, "mc")
     from engines import CalculatorEngine
     calc = CalculatorEngine()
     inputs = _inputs_namespace(
