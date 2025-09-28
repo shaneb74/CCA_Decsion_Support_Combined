@@ -74,25 +74,30 @@ def money(n: int | float) -> str:
     except Exception: return "$0"
 
 # ---------------- PFMA Utilities ----------------
-def _merge_conditions_from_cost_planner() -> list[str]:
-    """Gather conditions from canon and per-person saved keys. Sanitize to valid options."""
+def _merge_conditions_from_cost_planner() -> dict[str, list[str]]:
+    """Gather conditions per person from canon and saved keys. Sanitize to valid options."""
     valid = set(CONDITION_OPTIONS)
-    merged = []
-    for c in st.session_state.get("canon_conditions", []) or []:
-        if c in valid and c not in merged:
-            merged.append(c)
+    merged = {}
     for p in st.session_state.get("people", []):
         pid = p["id"]
+        conditions = []
+        # Canonical union
+        for c in st.session_state.get("canon_conditions", []) or []:
+            if c in valid and c not in conditions:
+                conditions.append(c)
+        # Per-person saved copies
         for kind in ("al", "mc"):
             vals = st.session_state.get(f"{kind}_conditions_saved_{pid}")
             if isinstance(vals, list):
                 for c in vals:
-                    if c in valid and c not in merged:
-                        merged.append(c)
+                    if c in valid and c not in conditions:
+                        conditions.append(c)
+        # Legacy single-value engine inputs
         for k in (f"{pid}_al_chronic", f"{pid}_mc_chronic"):
             val = st.session_state.get(k)
-            if val in ("Diabetes", "Parkinson's") and val not in merged:
-                merged.append(val)
+            if val in ("Diabetes", "Parkinson's") and val not in conditions:
+                conditions.append(val)
+        merged[pid] = conditions
     return merged
 
 def _derive_adls_from_flags(pid: str) -> list[str]:
@@ -229,16 +234,13 @@ def render_pfma():
     if "pfma_ltc" not in s:
         ltc_keys = ("a_ltc", "b_ltc", "ltc_insurance", "has_ltc_insurance", "household_ltc", "ltc_policy")
         s.pfma_ltc = any(str(s.get(k, "")).lower() in ("yes", "true", "1") for k in ltc_keys)
-    # Prefill chronic conditions from cost planner if PFMA is empty
+    # Prefill chronic conditions as a dictionary per person
     if not s.get("pfma_conditions"):
-        merged = _merge_conditions_from_cost_planner()
-        if merged:
-            s.pfma_conditions = merged
+        s.pfma_conditions = _merge_conditions_from_cost_planner()
     st.divider()
     st.subheader("Optional details for your advisor")
     st.caption("These optional details help your advisor prepare for your consultation, saving time and focusing on your care options. Complete as much as you’re comfortable with!")
     if ENABLE_PFMA_GAMIFICATION:
-        # Gamification: Progress and Badges
         optional_sections = [
             {"key": "pfma_care_type", "label": "Confirm Guided Care Plan"},
             {"key": "pfma_conditions", "label": "Confirm Cost Planner"},
@@ -246,15 +248,15 @@ def render_pfma():
             {"key": "pfma_settings", "label": "Care Preferences"},
             {"key": "pfma_marital", "label": "Household & Legal Basics"},
             {"key": "pfma_ltc", "label": "Benefits & Coverage"},
-            {"key": "pfma_name", "label": "Personal Information"},
+            {"key": "pfma_name_confirm", "label": "Personal Information"},
         ]
         filled_count = 0
         total_sections = 6 if s.get("pfma_relationship") != "Self" else 7
         for section in optional_sections:
-            if section["key"] == "pfma_name" and s.get("pfma_relationship") != "Self":
+            if section["key"] == "pfma_name_confirm" and s.get("pfma_relationship") != "Self":
                 continue
             val = s.get(section["key"])
-            if val or (isinstance(val, list) and len(val) > 0):
+            if val or (isinstance(val, (list, dict)) and len(val) > 0):
                 filled_count += 1
         progress = filled_count / total_sections
         st.progress(progress, text=f"Progress: {filled_count}/{total_sections} sections completed – You’re helping us tailor your care plan!")
@@ -292,7 +294,7 @@ def render_pfma():
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
             pid, name = p["id"], p["display_name"]
-            default_conditions = s.get("pfma_conditions", []) or _merge_conditions_from_cost_planner()
+            default_conditions = s.get("pfma_conditions", {}).get(pid, _merge_conditions_from_cost_planner().get(pid, []))
             st.multiselect(
                 f"Confirm chronic conditions for {name}",
                 CONDITION_OPTIONS,
@@ -429,10 +431,13 @@ def render_pfma():
             st.text_input("Email (optional)", key="pfma_email_confirm", value=s.get("pfma_email", ""), placeholder="E.g., taylor@example.com")
             st.text_input("Referral name (optional)", key="pfma_referral_name_confirm", value=s.get("pfma_referral_name", ""), placeholder="E.g., doctor, friend, or organization")
             if st.button("Confirm Personal Information", key="pfma_personal_confirm"):
-                s.pfma_name = s.pfma_name_confirm
-                s.pfma_phone = s.pfma_phone_confirm
-                s.pfma_email = s.pfma_email_confirm
-                s.pfma_referral_name = s.pfma_referral_name_confirm
+                s.pfma_optional = s.get("pfma_optional", {})
+                s.pfma_optional.update({
+                    "confirmed_name": s.get("pfma_name_confirm", ""),
+                    "confirmed_phone": s.get("pfma_phone_confirm", ""),
+                    "confirmed_email": s.get("pfma_email_confirm", ""),
+                    "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
+                })
                 st.success("Personal details confirmed!")
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save"):
@@ -472,10 +477,10 @@ def render_pfma():
         }
         if s.get("pfma_relationship") == "Self":
             s.pfma_optional.update({
-                "name": s.get("pfma_name", ""),
-                "phone": s.get("pfma_phone", ""),
-                "email": s.get("pfma_email", ""),
-                "referral_name": s.get("pfma_referral_name", ""),
+                "confirmed_name": s.get("pfma_name_confirm", s.get("pfma_name", "")),
+                "confirmed_phone": s.get("pfma_phone_confirm", s.get("pfma_phone", "")),
+                "confirmed_email": s.get("pfma_email_confirm", s.get("pfma_email", "")),
+                "confirmed_referral_name": s.get("pfma_referral_name_confirm", s.get("pfma_referral_name", "")),
             })
         st.success("Optional details saved.")
     if ENABLE_PFMA_GAMIFICATION:
@@ -493,7 +498,7 @@ def render_pfma():
             badges.append(("Household Hero 🏠", "Awesome work on household and legal details!"))
         if any(s.get(k) for k in ["pfma_budget", "pfma_primary_payer", "pfma_ltc", "pfma_va", "pfma_medicaid"]):
             badges.append(("Benefits Boss 💰", "Thanks for sharing budget and benefits info!"))
-        if s.get("pfma_relationship") == "Self" and any(s.get(k) for k in ["pfma_name", "pfma_phone", "pfma_email", "pfma_referral_name"]):
+        if s.get("pfma_relationship") == "Self" and any(s.get(k) for k in ["pfma_name_confirm", "pfma_phone_confirm", "pfma_email_confirm", "pfma_referral_name_confirm"]):
             badges.append(("Personal Info Star 🌟", "Great job confirming your contact details!"))
         if badges:
             cols = st.columns(len(badges))
@@ -563,7 +568,7 @@ elif st.session_state.step == "audience":
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
         rel = {"Myself":"self","My spouse/partner":"spouse","My parent":"parent","Someone else":"other"}[role]
-        people.append({"id":"A","display_name":n,"relationship":rel})
+        people.append({"id":"A","display_name":n,"relationship":"rel"})
     if st.button("Continue", key="aud_continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
