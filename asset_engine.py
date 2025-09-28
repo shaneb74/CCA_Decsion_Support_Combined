@@ -275,7 +275,6 @@ class IncomeAssetsEngine:
         # Persist for Breakdown consumers
         st.session_state["home_monthly_total"] = int(home_monthly)
         st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
-        _ai_handoff_home_btn2()
         return int(home_monthly), int(sale_proceeds)
 
     def _section_mods(self):
@@ -405,11 +404,3 @@ class IncomeAssetsEngine:
             assets_detailed_total=assets_detail,
             assets_total_effective=effective_assets,
         )
-
-
-def _ai_handoff_home_btn2():
-    try:
-        if st.button("Discuss this with my AI Agent (mock)", key="ai_handoff_home_btn2"):
-            st.info("Mock handoff created from Home Decisions.")
-    except Exception as e:
-        st.warning(f"AI handoff mock unavailable: {e}")
