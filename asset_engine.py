@@ -218,26 +218,17 @@ class IncomeAssetsEngine:
 
         return a_va, b_va, a_ltc_add, b_ltc_add, benefits_total
 
-    
-def _section_home_decision(self):
+    def _section_home_decision(self):
         with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=True):
             decision = st.selectbox("What do you plan to do with the home?",
                                     ["Keep", "Sell", "HELOC", "Reverse mortgage"],
                                     key="home_decision")
-            # Canonical decision code to avoid label mismatches
-            HOME_DECISION_MAP = {
-                "Keep": "KEEP",
-                "Sell": "SELL",
-                "HELOC": "HELOC",
-                "Reverse mortgage": "RM",
-                "Reverse Mortgage": "RM",
-            }
-            decision_code = HOME_DECISION_MAP.get(decision, str(decision))
+            apply_proceeds = st.checkbox("Apply net proceeds to assets summary", value=True, key="apply_proceeds_assets")
 
             home_monthly = 0
             sale_proceeds = 0
 
-            if decision_code == "KEEP":
+            if decision == "Keep":
                 c1, c2, c3 = st.columns(3)
                 with c1: mort = _money("Monthly mortgage/HELOC payment", "home_mort", 0)
                 with c2: tax  = _money("Monthly property taxes", "home_tax", 0)
@@ -248,7 +239,7 @@ def _section_home_decision(self):
                 home_monthly = mort + tax + ins + hoa + util
                 st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
 
-            elif decision_code == "SELL":
+            elif decision == "Sell":
                 c1, c2, c3 = st.columns(3)
                 with c1: sale = _money("Estimated sale price", "home_sale_price", 0, step=1000)
                 with c2: pay  = _money("Principal payoff at sale", "home_payoff", 0, step=1000)
@@ -258,77 +249,35 @@ def _section_home_decision(self):
                 fees_amt = int(round(sale * (fee / 100.0)))
                 sale_proceeds = max(0, sale - pay - fees_amt)
                 st.metric("Estimated net proceeds", _fmt(sale_proceeds))
+                st.metric("Subtotal — Home monthly costs", _fmt(0))
 
-                st.session_state["apply_proceeds_assets"] = st.checkbox(
-                    "Apply net proceeds to assets summary", value=True, key="apply_proceeds_assets"
-                )
-                # No carrying costs after sale
-                home_monthly = 0
-
-            elif decision_code == "HELOC":
-                c1, c2 = st.columns(2)
-                with c1: heloc_pay = _money("Monthly HELOC payment", "home_mort", 0)
-                with c2: tax = _money("Monthly property taxes", "home_tax", 0)
-                c3, c4 = st.columns(2)
-                with c3: ins = _money("Monthly homeowners insurance", "home_ins", 0)
-                with c4: hoa = _money("Monthly HOA/maintenance", "home_hoa", 0)
-                util = _money("Monthly utilities (avg.)", "home_util", 0)
-                home_monthly = heloc_pay + tax + ins + hoa + util
+            elif decision == "HELOC":
+                c1, c2, c3 = st.columns(3)
+                with c1: heloc = _money("Monthly HELOC payment", "home_heloc", 0)
+                with c2: tax   = _money("Monthly property taxes", "home_tax", 0)
+                with c3: ins   = _money("Monthly homeowners insurance", "home_ins", 0)
+                c4, c5 = st.columns(2)
+                with c4: hoa   = _money("Monthly HOA/maintenance", "home_hoa", 0)
+                with c5: util  = _money("Monthly utilities (avg.)", "home_util", 0)
+                home_monthly = heloc + tax + ins + hoa + util
                 st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
 
-            elif decision_code == "RM":
-                # Reverse mortgage specifics
-                plan = st.selectbox("Payout plan", ["Monthly (tenure)", "Monthly (term)", "Lump sum", "Line of credit"], key="rm_plan")
+            else:  # Reverse mortgage
                 c1, c2 = st.columns(2)
                 with c1: tax = _money("Monthly property taxes", "home_tax", 0)
                 with c2: ins = _money("Monthly homeowners insurance", "home_ins", 0)
                 c3, c4 = st.columns(2)
                 with c3: hoa  = _money("Monthly HOA/maintenance", "home_hoa", 0)
                 with c4: util = _money("Monthly utilities (avg.)", "home_util", 0)
-                lesa = st.checkbox("Property charges set-aside (LESA) covers taxes & insurance", value=False, key="rm_lesa")
-
-                rm_monthly = 0
-                rm_lump_applied = 0
-                rm_fees_oop_total = 0
-
-                if plan in ["Monthly (tenure)", "Monthly (term)"]:
-                    rm_monthly = _money("Expected monthly proceeds", "rm_monthly_income", 0, step=50)
-                    st.caption("These proceeds are added to Monthly Income.")
-                elif plan == "Lump sum":
-                    ls = _money("Lump sum at closing", "rm_lump_amount", 0, step=1000)
-                    apply_ls = st.checkbox("Apply lump sum to assets summary", value=True, key="rm_apply_lump_assets")
-                    rm_lump_applied = int(ls if apply_ls else 0)
-                    st.caption("If applied, this increases Assets Total.")
-                else:
-                    st.number_input("Initial credit limit (informational)", min_value=0, step=1000, key="rm_loc_limit")
-                    st.caption("Line-of-credit capacity is not counted as income or assets by default.")
-
-                with st.expander("Upfront costs (optional)", expanded=False):
-                    st.caption("Mark any that are paid out-of-pocket to deduct from Assets.")
-                    o1 = _money("Origination & closing costs (est.)", "rm_fee_orig_close", 0, step=500); o1_oop = st.checkbox("Paid out-of-pocket", value=False, key="rm_fee_orig_close_oop")
-                    o2 = _money("Initial MIP (est.)", "rm_fee_mip", 0, step=500); o2_oop = st.checkbox("Paid out-of-pocket", value=False, key="rm_fee_mip_oop")
-                    o3 = _money("Appraisal / counseling / other (est.)", "rm_fee_misc", 0, step=250); o3_oop = st.checkbox("Paid out-of-pocket", value=False, key="rm_fee_misc_oop")
-                    o4 = _money("Repairs set-aside (if required)", "rm_fee_repairs", 0, step=500); o4_oop = st.checkbox("Paid out-of-pocket", value=False, key="rm_fee_repairs_oop")
-                    rm_fees_oop_total = int((o1 if o1_oop else 0) + (o2 if o2_oop else 0) + (o3 if o3_oop else 0) + (o4 if o4_oop else 0))
-
-                tax_month = 0 if lesa else tax
-                ins_month = 0 if lesa else ins
-                home_monthly = tax_month + ins_month + hoa + util
+                home_monthly = tax + ins + hoa + util
                 st.metric("Subtotal — Home monthly costs", _fmt(home_monthly))
 
-                # Persist derived RM fields
-                st.session_state["rm_lump_applied"] = int(rm_lump_applied)
-                st.session_state["rm_fees_oop_total"] = int(rm_fees_oop_total)
+        # Persist for Breakdown consumers
+        st.session_state["home_monthly_total"] = int(home_monthly)
+        st.session_state["home_sale_net_proceeds"] = int(sale_proceeds if st.session_state.get("apply_proceeds_assets") else 0)
+        return int(home_monthly), int(sale_proceeds)
 
-            # Persist for Breakdown consumers (applies to all decisions)
-            st.session_state["home_monthly_total"] = int(home_monthly)
-            # sale_proceeds only meaningful for SELL
-            sale_net = int(sale_proceeds) if decision_code == "SELL" else 0
-            st.session_state["home_sale_net_proceeds"] = int(sale_net if st.session_state.get("apply_proceeds_assets", False) else 0)
-            return int(home_monthly), int(sale_net)
-
-
-def _section_mods(self):
+    def _section_mods(self):
         with st.expander("Home modifications (grab bars, ramps, bath, etc.)", expanded=False):
             pay_method = st.radio("Payment method", ["Amortize monthly", "Pay upfront (one-time)"],
                                   index=0, key="mods_pay_method",
