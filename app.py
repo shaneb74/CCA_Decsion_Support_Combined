@@ -972,6 +972,7 @@ elif st.session_state.step == "breakdown":
         {"label": "Other Monthly Costs", "value": other_monthly},
     ]
     if any(item["value"] > 0 for item in monthly_costs_data):
+        ```chartjs
         {
             "type": "bar",
             "data": {
@@ -999,6 +1000,7 @@ elif st.session_state.step == "breakdown":
                 }
             }
         }
+        ```
     else:
         st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
