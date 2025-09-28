@@ -163,7 +163,9 @@ def render_export_ui():
             html.append(f"<p><b>Monthly surplus:</b> {money(-pic['gap'])}</p>")
         else:
             html.append(f"<p><b>Monthly gap:</b> {money(pic['gap'])}</p>")
-            ym = f"{pic['runway_years']} years {pic['runway_months_remainder']} months" if pic['runway_years']>0 else f\"{pic['runway_months_remainder']} months\""
+            ym = f"{pic['runway_years']} years {pic['runway_months_remainder']} months" \
+         if pic['runway_years'] > 0 else f"{pic['runway_months_remainder']} months"
+
             html.append(f"<p><b>Estimated runway from assets:</b> {ym}</p>")
         html.append("</body></html>")
         html_bytes = "\n".join(html).encode("utf-8")
