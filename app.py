@@ -81,18 +81,15 @@ def _merge_conditions_from_cost_planner() -> dict[str, list[str]]:
     for p in st.session_state.get("people", []):
         pid = p["id"]
         conditions = []
-        # Canonical union
         for c in st.session_state.get("canon_conditions", []) or []:
             if c in valid and c not in conditions:
                 conditions.append(c)
-        # Per-person saved copies
         for kind in ("al", "mc"):
             vals = st.session_state.get(f"{kind}_conditions_saved_{pid}")
             if isinstance(vals, list):
                 for c in vals:
                     if c in valid and c not in conditions:
                         conditions.append(c)
-        # Legacy single-value engine inputs
         for k in (f"{pid}_al_chronic", f"{pid}_mc_chronic"):
             val = st.session_state.get(k)
             if val in ("Diabetes", "Parkinson's") and val not in conditions:
@@ -100,30 +97,68 @@ def _merge_conditions_from_cost_planner() -> dict[str, list[str]]:
         merged[pid] = conditions
     return merged
 
-def _derive_adls_from_flags(pid: str) -> list[str]:
-    """Map Guided Care Plan flags and Cost Planner data to ADLs for prefilling pfma_adls."""
-    adls = []
+def _derive_adls_and_others(pid: str) -> dict[str, any]:
+    """Map Guided Care Plan flags and Cost Planner data to ADLs, mental health, cognition, dietary, settings, and why."""
+    result = {
+        "adls": [],
+        "mental_health": "",
+        "cognition": "Intact",
+        "dietary": [],
+        "settings": [],
+        "why": "Planning ahead"
+    }
     res = st.session_state.get("planner_results", {}).get(pid)
     flags = set(getattr(res, "flags", []) if res else [])
+    # ADLs
     if "moderate_dependence" in flags or "high_dependence" in flags:
-        adls.extend(["Bathing", "Dressing", "Eating / meals"])
+        result["adls"].extend(["Bathing", "Dressing", "Eating / meals"])
+        result["why"] = "Care needs increased"
     if "high_mobility_dependence" in flags or "moderate_mobility" in flags:
-        adls.append("Transferring / mobility")
+        result["adls"].append("Transferring / mobility")
     if "limited_support" in flags or "no_support" in flags:
-        adls.append("Companionship / safety checks")
+        result["adls"].append("Companionship / safety checks")
     if "moderate_cognitive_decline" in flags or "severe_cognitive_risk" in flags:
-        adls.append("Medication management")
+        result["adls"].append("Medication management")
+        result["why"] = "Memory decline"
     if "moderate_safety_concern" in flags or "high_safety_concern" in flags:
-        adls.append("Companionship / safety checks")
+        result["adls"].append("Companionship / safety checks")
+        result["why"] = "Recent fall / hospitalization"
     if "low_access" in flags or "very_low_access" in flags:
-        adls.append("Transportation")
+        result["adls"].append("Transportation")
     for kind in ("al", "mc"):
         care_level = st.session_state.get(f"{kind}_care_level_{pid}", st.session_state.get(f"{kind}_care_level"))
         if care_level in ("Moderate", "High"):
-            adls.extend(["Bathing", "Dressing", "Toileting"])
+            result["adls"].extend(["Bathing", "Dressing", "Toileting"])
+            result["why"] = "Care needs increased"
+        if kind == "mc" and care_level:
+            result["why"] = "Memory decline"
     if st.session_state.get(f"ih_hours_per_day_{pid}", st.session_state.get("ih_hours_per_day", 0)) > 4:
-        adls.extend(["Bathing", "Dressing", "Eating / meals"])
-    return list(set(adls))
+        result["adls"].extend(["Bathing", "Dressing", "Eating / meals"])
+        result["why"] = "Care needs increased"
+    result["adls"] = list(set(result["adls"]))
+    # Mental Health
+    if "mental_health_concern" in flags:
+        result["mental_health"] = "Possible depression or isolation"
+    # Cognition
+    if "severe_cognitive_risk" in flags:
+        result["cognition"] = "Severe impairment"
+    elif "moderate_cognitive_decline" in flags:
+        result["cognition"] = "Moderate impairment"
+    elif "mild_cognitive_decline" in flags:
+        result["cognition"] = "Mild impairment"
+    # Dietary
+    conditions = st.session_state.get("pfma_conditions", {}).get(pid, _merge_conditions_from_cost_planner().get(pid, []))
+    if "Diabetes" in conditions:
+        result["dietary"].append("Diabetic")
+    # Settings
+    if "open_to_move" in flags:
+        result["settings"].extend(["Assisted Living", "Memory Care"])
+    elif "prefers_home" in flags or "strongly_prefers_home" in flags:
+        result["settings"].extend(["In-home care", "Not sure"])
+    # Why (additional checks)
+    if "needs_financial_assistance" in flags:
+        result["why"] = "Finances / affordability"
+    return result
 
 # ---------------- PFMA render ----------------
 def render_pfma():
@@ -273,7 +308,7 @@ def render_pfma():
                 index=["None", "In-home Care", "Assisted Living", "Memory Care"].index(nice.get(care_type, "None")),
                 key=f"pfma_care_type_{pid}",
             )
-            default_adls = _derive_adls_from_flags(pid)
+            derived = _derive_adls_and_others(pid)
             st.multiselect(
                 f"Confirm activities needing support for {name}",
                 [
@@ -281,7 +316,7 @@ def render_pfma():
                     "Medication management", "Transportation", "Housekeeping / laundry",
                     "Finances / bills", "Companionship / safety checks"
                 ],
-                default=default_adls,
+                default=derived["adls"],
                 key=f"pfma_adls_{pid}",
             )
         if st.button("Confirm Guided Care Plan", key="pfma_guided_confirm"):
@@ -289,7 +324,7 @@ def render_pfma():
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            st.success("Guided Care Plan details confirmed!")
+            st.success("Guided Care Plan confirmed!")
     with st.expander("Confirm Cost Planner"):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
@@ -322,114 +357,210 @@ def render_pfma():
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            st.success("Cost Planner details confirmed!")
+            st.success("Cost Planner confirmed!")
     with st.expander("Care Needs & Daily Support"):
-        st.write("Help us tailor your care plan by sharing any additional health or daily support needs. These details can make a big difference in finding the right fit.")
-        st.multiselect(
-            "Symptoms or behaviors",
-            ["Wandering", "Aggression", "Other"],
-            key="pfma_symptoms",
-        )
-        st.text_area(
-            "Mental health concerns",
-            key="pfma_mental_health",
-            placeholder="E.g., anxiety, depression",
-        )
-        st.multiselect(
-            "Dietary restrictions or special needs",
-            ["Vegetarian", "Diabetic", "Low Sodium", "Other"],
-            key="pfma_dietary",
-        )
-        st.selectbox(
-            "Cognition",
-            ["Intact", "Mild impairment", "Moderate impairment", "Severe impairment"],
-            key="pfma_cognition",
-        )
-        st.checkbox("Discharging on hospice", key="pfma_hospice")
-        with st.expander("Additional Care Details (Very Optional)"):
-            st.selectbox("Vision issues", ["No", "Yes"], key="pfma_vision")
-            st.selectbox("Hearing issues", ["No", "Yes"], key="pfma_hearing")
+        st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
+        for p in people:
+            pid, name = p["id"], p["display_name"]
+            derived = _derive_adls_and_others(pid)
+            st.multiselect(
+                f"Symptoms or behaviors for {name}",
+                ["Wandering", "Aggression", "Other"],
+                key=f"pfma_symptoms_{pid}",
+                help="E.g., wandering at night can affect care needs"
+            )
+            st.text_area(
+                f"Mental health concerns for {name}",
+                value=derived["mental_health"],
+                key=f"pfma_mental_health_{pid}",
+                placeholder="E.g., anxiety, depression",
+                help="This helps us recommend supportive activities"
+            )
+            st.multiselect(
+                f"Dietary restrictions or special needs for {name}",
+                ["Vegetarian", "Diabetic", "Low Sodium", "Other"],
+                default=derived["dietary"],
+                key=f"pfma_dietary_{pid}",
+                help="Dietary needs guide meal planning"
+            )
             st.selectbox(
-                "Weight-bearing status",
+                f"Cognition for {name}",
+                ["Intact", "Mild impairment", "Moderate impairment", "Severe impairment"],
+                index=["Intact", "Mild impairment", "Moderate impairment", "Severe impairment"].index(derived["cognition"]),
+                key=f"pfma_cognition_{pid}",
+                help="This helps tailor memory support"
+            )
+            st.selectbox(
+                f"Vision issues for {name}",
+                ["No", "Yes"],
+                key=f"pfma_vision_{pid}",
+                help="Vision issues can affect reading or safety"
+            )
+            st.selectbox(
+                f"Hearing issues for {name}",
+                ["No", "Yes"],
+                key=f"pfma_hearing_{pid}",
+                help="Hearing issues may require communication support"
+            )
+            st.selectbox(
+                f"Weight-bearing status for {name}",
                 ["Independent", "Needs assistance", "Non-weight-bearing"],
-                key="pfma_weight",
+                key=f"pfma_weight_{pid}",
+                help="This impacts mobility support"
             )
             st.selectbox(
-                "Incontinence",
+                f"Incontinence for {name}",
                 ["Fully continent", "Bladder", "Bowel", "Both"],
-                key="pfma_incont",
+                key=f"pfma_incont_{pid}",
+                help="This helps plan personal care"
             )
             st.selectbox(
-                "Sleeping pattern (typical night)",
+                f"Sleeping pattern for {name} (typical night)",
                 ["Sleeps through", "Up 1–2 times", "Up 3–5 times", "Frequent / hourly"],
-                key="pfma_sleep",
+                key=f"pfma_sleep_{pid}",
+                help="Sleep patterns guide nighttime care"
             )
+        if st.button("Confirm Care Needs & Daily Support", key="pfma_needs_confirm"):
+            for p in people:
+                pid = p["id"]
+                s.pfma_symptoms = {**s.get("pfma_symptoms", {}), pid: s[f"pfma_symptoms_{pid}"]}
+                s.pfma_mental_health = {**s.get("pfma_mental_health", {}), pid: s[f"pfma_mental_health_{pid}"]}
+                s.pfma_dietary = {**s.get("pfma_dietary", {}), pid: s[f"pfma_dietary_{pid}"]}
+                s.pfma_cognition = {**s.get("pfma_cognition", {}), pid: s[f"pfma_cognition_{pid}"]}
+                s.pfma_vision = {**s.get("pfma_vision", {}), pid: s[f"pfma_vision_{pid}"]}
+                s.pfma_hearing = {**s.get("pfma_hearing", {}), pid: s[f"pfma_hearing_{pid}"]}
+                s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
+                s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
+                s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
+            st.success("Care Needs confirmed!")
     with st.expander("Care Preferences"):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
-        st.multiselect(
-            "Settings you’re open to",
-            ["In-home care", "Assisted Living", "Memory Care", "Not sure"],
-            key="pfma_settings",
-        )
-        st.selectbox(
-            "Why seeking care now?",
-            [
-                "Care needs increased", "Caregiver burnout", "Recent fall / hospitalization",
-                "Memory decline", "Planning ahead", "Finances / affordability", "Other"
-            ],
-            key="pfma_why",
-        )
-        st.checkbox("Enjoys being around children", key="pfma_enjoys_children")
-        st.text_area(
-            "Scheduled activities resident enjoys",
-            key="pfma_activities",
-            placeholder="E.g., reading, gardening, social events",
-        )
-        st.selectbox(
-            "Preferred search radius for care facilities",
-            ["5 miles", "10 miles", "25 miles", "50 miles", "No preference"],
-            key="pfma_radius",
-        )
+        for p in people:
+            pid, name = p["id"], p["display_name"]
+            derived = _derive_adls_and_others(pid)
+            st.multiselect(
+                f"Settings you’re open to for {name}",
+                ["In-home care", "Assisted Living", "Memory Care", "Not sure"],
+                default=derived["settings"],
+                key=f"pfma_settings_{pid}",
+                help="Not sure? We’ll discuss options with you"
+            )
+            st.selectbox(
+                f"Why seeking care now for {name}?",
+                [
+                    "Care needs increased", "Caregiver burnout", "Recent fall / hospitalization",
+                    "Memory decline", "Planning ahead", "Finances / affordability", "Other"
+                ],
+                index=["Care needs increased", "Caregiver burnout", "Recent fall / hospitalization", "Memory decline", "Planning ahead", "Finances / affordability", "Other"].index(derived["why"]),
+                key=f"pfma_why_{pid}",
+                help="This helps us understand your urgency"
+            )
+            st.checkbox(f"Enjoys being around children for {name}", key=f"pfma_enjoys_children_{pid}", help="This ensures a family-friendly environment")
+            st.checkbox(f"Do you have pets for {name}?", key=f"pfma_pets_{pid}", help="This helps find pet-friendly communities")
+            st.text_area(
+                f"Scheduled activities {name} enjoys",
+                key=f"pfma_activities_{pid}",
+                placeholder="E.g., reading, gardening, social events",
+                help="This personalizes your daily routine"
+            )
+            st.selectbox(
+                f"Preferred search radius for care facilities for {name}",
+                ["5 miles", "10 miles", "25 miles", "50 miles", "No preference"],
+                key=f"pfma_radius_{pid}",
+                help="This narrows down care locations"
+            )
+        if st.button("Confirm Care Preferences", key="pfma_preferences_confirm"):
+            for p in people:
+                pid = p["id"]
+                s.pfma_settings = {**s.get("pfma_settings", {}), pid: s[f"pfma_settings_{pid}"]}
+                s.pfma_why = {**s.get("pfma_why", {}), pid: s[f"pfma_why_{pid}"]}
+                s.pfma_enjoys_children = {**s.get("pfma_enjoys_children", {}), pid: s[f"pfma_enjoys_children_{pid}"]}
+                s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
+                s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
+                s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
+            st.success("Care Preferences confirmed!")
     with st.expander("Household & Legal Basics"):
-        st.write("Tell us about your living situation, habits, and legal arrangements to ensure we recommend the right environment.")
-        st.selectbox(
-            "Marital status",
-            ["Single", "Married", "Widowed", "Divorced", "Partnered"],
-            key="pfma_marital",
-        )
-        st.checkbox("Do you have pets?", key="pfma_pets")
-        st.selectbox(
-            "Current living situation",
-            ["Own home", "Renting", "Living with family", "Assisted living", "Other"],
-            key="pfma_living_situation",
-        )
-        st.selectbox("Smoking", ["No", "Yes"], key="pfma_smoking")
-        st.selectbox("Alcohol use", ["No", "Yes"], key="pfma_alcohol")
-        st.selectbox("POA / DPOA", ["None", "POA", "DPOA"], key="pfma_poa_type")
-        if s.get("pfma_poa_type") in ("POA", "DPOA"):
-            st.text_input("POA/DPOA name", key="pfma_poa_name", placeholder="E.g., John Smith")
+        st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
+        for p in people:
+            pid, name = p["id"], p["display_name"]
+            st.selectbox(
+                f"Marital status for {name}",
+                ["Single", "Married", "Widowed", "Divorced", "Partnered"],
+                key=f"pfma_marital_{pid}",
+                help="This impacts housing and care planning"
+            )
+            st.selectbox(
+                f"Current living situation for {name}",
+                ["Own home", "Renting", "Living with family", "Assisted living", "Other"],
+                key=f"pfma_living_situation_{pid}",
+                help="This helps us understand your current home"
+            )
+            st.selectbox(
+                f"Smoking for {name}",
+                ["No", "Yes"],
+                key=f"pfma_smoking_{pid}",
+                help="Some communities have smoking policies"
+            )
+            st.selectbox(
+                f"Alcohol use for {name}",
+                ["No", "Yes"],
+                key=f"pfma_alcohol_{pid}",
+                help="This informs community fit"
+            )
+            st.selectbox(
+                f"POA / DPOA for {name}",
+                ["None", "POA", "DPOA"],
+                key=f"pfma_poa_type_{pid}",
+                help="This helps with legal coordination if needed"
+            )
+            if s.get(f"pfma_poa_type_{pid}") in ("POA", "DPOA"):
+                st.text_input(
+                    f"POA/DPOA name for {name}",
+                    key=f"pfma_poa_name_{pid}",
+                    placeholder="E.g., John Smith",
+                    help="Provide the name of your POA/DPOA"
+                )
+        if st.button("Confirm Household & Legal Basics", key="pfma_household_confirm"):
+            for p in people:
+                pid = p["id"]
+                s.pfma_marital = {**s.get("pfma_marital", {}), pid: s[f"pfma_marital_{pid}"]}
+                s.pfma_living_situation = {**s.get("pfma_living_situation", {}), pid: s[f"pfma_living_situation_{pid}"]}
+                s.pfma_smoking = {**s.get("pfma_smoking", {}), pid: s[f"pfma_smoking_{pid}"]}
+                s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
+                s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
+                s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
+            st.success("Household & Legal confirmed!")
     with st.expander("Benefits & Coverage"):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
             "Realistic monthly care budget",
             ["<$3,000", "$3,000–$5,000", "$5,000–$8,000", ">$8,000"],
             key="pfma_budget",
+            help="This guides affordable care options"
         )
         st.selectbox(
-            "Primary payer",
+            "How will care primarily be paid for?",
             ["Private pay", "Long-term care insurance", "Medicaid (or waiver)", "VA benefit", "Other / mixed"],
             key="pfma_primary_payer",
+            help="This helps your advisor explore funding options, even if most payers don’t cover senior living"
         )
-        st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False))
-        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False))
-        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid")
+        st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False), help="Check if you have an LTC policy")
+        st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
+        st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", help="Check if you’re interested in Medicaid support")
+        if st.button("Confirm Benefits & Coverage", key="pfma_benefits_confirm"):
+            s.pfma_budget = s.get("pfma_budget")
+            s.pfma_primary_payer = s.get("pfma_primary_payer")
+            s.pfma_ltc = s.get("pfma_ltc", False)
+            s.pfma_va = s.get("pfma_va", False)
+            s.pfma_medicaid = s.get("pfma_medicaid", False)
+            st.success("Benefits & Coverage confirmed!")
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information"):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
-            st.text_input("Your name", key="pfma_name_confirm", value=s.get("pfma_name", ""), placeholder="E.g., Taylor Morgan")
-            st.text_input("Best phone number", key="pfma_phone_confirm", value=s.get("pfma_phone", ""), placeholder="E.g., (555) 123-4567")
-            st.text_input("Email (optional)", key="pfma_email_confirm", value=s.get("pfma_email", ""), placeholder="E.g., taylor@example.com")
-            st.text_input("Referral name (optional)", key="pfma_referral_name_confirm", value=s.get("pfma_referral_name", ""), placeholder="E.g., doctor, friend, or organization")
+            st.text_input("Your name", key="pfma_name_confirm", value=s.get("pfma_name", ""), placeholder="E.g., Taylor Morgan", help="We only use this to contact you")
+            st.text_input("Best phone number", key="pfma_phone_confirm", value=s.get("pfma_phone", ""), placeholder="E.g., (555) 123-4567", help="We’ll call at your preferred time")
+            st.text_input("Email (optional)", key="pfma_email_confirm", value=s.get("pfma_email", ""), placeholder="E.g., taylor@example.com", help="Optional for email communication")
+            st.text_input("Referral name (optional)", key="pfma_referral_name_confirm", value=s.get("pfma_referral_name", ""), placeholder="E.g., doctor, friend, or organization", help="Who referred you to us?")
             if st.button("Confirm Personal Information", key="pfma_personal_confirm"):
                 s.pfma_optional = s.get("pfma_optional", {})
                 s.pfma_optional.update({
@@ -438,7 +569,7 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                st.success("Personal details confirmed!")
+                st.success("Personal Information confirmed!")
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save"):
         s.pfma_optional = {
@@ -447,28 +578,27 @@ def render_pfma():
             "conditions": s.get("pfma_conditions", {}),
             "diabetes_control": s.get("pfma_diabetes_control", {}),
             "mobility": s.get("pfma_mobility", {}),
-            "symptoms": s.get("pfma_symptoms", []),
-            "mental_health": s.get("pfma_mental_health", ""),
-            "dietary": s.get("pfma_dietary", []),
-            "cognition": s.get("pfma_cognition"),
-            "hospice": s.get("pfma_hospice", False),
-            "vision": s.get("pfma_vision"),
-            "hearing": s.get("pfma_hearing"),
-            "weight": s.get("pfma_weight"),
-            "incontinence": s.get("pfma_incont"),
-            "sleep": s.get("pfma_sleep"),
-            "settings": s.get("pfma_settings", []),
-            "why": s.get("pfma_why"),
-            "enjoys_children": s.get("pfma_enjoys_children", False),
-            "activities": s.get("pfma_activities", ""),
-            "radius": s.get("pfma_radius"),
-            "marital": s.get("pfma_marital"),
-            "pets": s.get("pfma_pets", False),
-            "living_situation": s.get("pfma_living_situation"),
-            "smoking": s.get("pfma_smoking"),
-            "alcohol": s.get("pfma_alcohol"),
-            "poa_type": s.get("pfma_poa_type"),
-            "poa_name": s.get("pfma_poa_name", ""),
+            "symptoms": s.get("pfma_symptoms", {}),
+            "mental_health": s.get("pfma_mental_health", {}),
+            "dietary": s.get("pfma_dietary", {}),
+            "cognition": s.get("pfma_cognition", {}),
+            "vision": s.get("pfma_vision", {}),
+            "hearing": s.get("pfma_hearing", {}),
+            "weight": s.get("pfma_weight", {}),
+            "incontinence": s.get("pfma_incont", {}),
+            "sleep": s.get("pfma_sleep", {}),
+            "settings": s.get("pfma_settings", {}),
+            "why": s.get("pfma_why", {}),
+            "enjoys_children": s.get("pfma_enjoys_children", {}),
+            "pets": s.get("pfma_pets", {}),
+            "activities": s.get("pfma_activities", {}),
+            "radius": s.get("pfma_radius", {}),
+            "marital": s.get("pfma_marital", {}),
+            "living_situation": s.get("pfma_living_situation", {}),
+            "smoking": s.get("pfma_smoking", {}),
+            "alcohol": s.get("pfma_alcohol", {}),
+            "poa_type": s.get("pfma_poa_type", {}),
+            "poa_name": s.get("pfma_poa_name", {}),
             "budget": s.get("pfma_budget"),
             "primary_payer": s.get("pfma_primary_payer"),
             "has_ltc": s.get("pfma_ltc", False),
@@ -490,11 +620,11 @@ def render_pfma():
             badges.append(("Care Plan Confirmer 📋", "Awarded for confirming your care plan details!"))
         if any(s.get(k) for k in ["pfma_conditions", "pfma_mobility", "pfma_diabetes_control"]):
             badges.append(("Cost Planner Confirmer 💡", "Thanks for verifying your health and mobility!"))
-        if any(s.get(k) for k in ["pfma_symptoms", "pfma_mental_health", "pfma_dietary", "pfma_cognition", "pfma_hospice", "pfma_vision", "pfma_hearing", "pfma_weight", "pfma_incont", "pfma_sleep"]):
+        if any(s.get(k) for k in ["pfma_symptoms", "pfma_mental_health", "pfma_dietary", "pfma_cognition", "pfma_vision", "pfma_hearing", "pfma_weight", "pfma_incont", "pfma_sleep"]):
             badges.append(("Care Needs Expert 🩺", "Great job sharing health and support needs!"))
-        if any(s.get(k) for k in ["pfma_settings", "pfma_why", "pfma_enjoys_children", "pfma_activities", "pfma_radius"]):
+        if any(s.get(k) for k in ["pfma_settings", "pfma_why", "pfma_enjoys_children", "pfma_pets", "pfma_activities", "pfma_radius"]):
             badges.append(("Preferences Pro ⭐", "Thanks for detailing your care preferences!"))
-        if any(s.get(k) for k in ["pfma_marital", "pfma_pets", "pfma_living_situation", "pfma_smoking", "pfma_alcohol", "pfma_poa_type", "pfma_poa_name"]):
+        if any(s.get(k) for k in ["pfma_marital", "pfma_living_situation", "pfma_smoking", "pfma_alcohol", "pfma_poa_type", "pfma_poa_name"]):
             badges.append(("Household Hero 🏠", "Awesome work on household and legal details!"))
         if any(s.get(k) for k in ["pfma_budget", "pfma_primary_payer", "pfma_ltc", "pfma_va", "pfma_medicaid"]):
             badges.append(("Benefits Boss 💰", "Thanks for sharing budget and benefits info!"))
@@ -508,7 +638,7 @@ def render_pfma():
         else:
             st.info("Complete sections to unlock badges and help your advisor!")
         if filled_count == total_sections:
-            st.success("All sections complete! You’ve provided everything needed for a stellar consultation.")
+            st.success("All sections complete! You’re ready for a stellar consultation!")
 
 # ---------------- Data files present? ----------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
