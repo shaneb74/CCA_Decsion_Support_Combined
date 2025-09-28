@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 import traceback
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
+import pandas as pd
+from streamlit.components.v1 import html
 
 from cost_controls import (
     render_location_control,
@@ -19,7 +19,7 @@ ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lo
 
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="wide")
 
-# CSS for confirm buttons and gamification animations
+# CSS for confirm buttons, gamification animations, and chart styling
 st.markdown("""
     <style>
     .stButton > button[kind="primary"] {
@@ -786,7 +786,7 @@ elif st.session_state.step == "audience":
         default = "Alex" if role != "My parent" else "Mom"
         n = st.text_input("Name", value=default, key="p_name", placeholder="Name")
         rel = {"Myself":"self","My spouse/partner":"spouse","My parent":"parent","Someone else":"other"}[role]
-        people.append({"id":"A","display_name":n,"relationship":"rel"})
+        people.append({"id":"A","display_name":n,"relationship":rel})
     if st.button("Continue", key="aud_continue"):
         st.session_state.people = people
         st.session_state.current_person = 0
@@ -972,16 +972,8 @@ elif st.session_state.step == "breakdown":
         "Amount": [care_total, home_monthly, mods_monthly, other_monthly]
     }
     if any(amount > 0 for amount in monthly_costs_data["Amount"]):
-        fig = px.bar(
-            x=monthly_costs_data["Category"],
-            y=monthly_costs_data["Amount"],
-            labels={"x": "Cost Category", "y": "Amount ($)"},
-            title="Monthly Costs ($)",
-            color=monthly_costs_data["Category"],
-            color_discrete_sequence=["#4CAF50", "#2196F3", "#FF9800", "#F44336"]
-        )
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        df = pd.DataFrame(monthly_costs_data)
+        st.bar_chart(df.set_index("Category")["Amount"], color="#4CAF50")
     else:
         st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
@@ -1009,14 +1001,33 @@ elif st.session_state.step == "breakdown":
         "Amount": [amount for amount in income_data["Amount"] if amount > 0]
     }
     if income_data_filtered["Amount"]:
-        fig = px.pie(
-            names=income_data_filtered["Source"],
-            values=income_data_filtered["Amount"],
-            title="Income Sources ($)",
-            color_discrete_sequence=["#4CAF50", "#2196F3", "#FF9800", "#F44336", "#9C27B0"]
-        )
-        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-        st.plotly_chart(fig, use_container_width=True)
+        chart_id = "income_pie_chart"
+        chart_html = f"""
+        <canvas id="{chart_id}" style="max-height: 300px;"></canvas>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+        const ctx = document.getElementById('{chart_id}').getContext('2d');
+        new Chart(ctx, {{
+            type: 'pie',
+            data: {{
+                labels: {income_data_filtered["Source"]},
+                datasets: [{{
+                    data: {income_data_filtered["Amount"]},
+                    backgroundColor: ["#4CAF50", "#2196F3", "#FF9800", "#F44336", "#9C27B0"],
+                    borderColor: ["#388E3C", "#1976D2", "#F57C00", "#D32F2F", "#7B1FA2"],
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                plugins: {{
+                    legend: {{ position: 'bottom' }},
+                    title: {{ display: true, text: 'Income Sources ($)' }}
+                }}
+            }}
+        }});
+        </script>
+        """
+        html(chart_html, height=350)
     else:
         st.info("No income sources entered yet.")
     st.subheader("Assets")
@@ -1042,14 +1053,33 @@ elif st.session_state.step == "breakdown":
         "Amount": [amount for amount in assets_data["Amount"] if amount > 0]
     }
     if assets_data_filtered["Amount"]:
-        fig = px.pie(
-            names=assets_data_filtered["Category"],
-            values=assets_data_filtered["Amount"],
-            title="Assets Breakdown ($)",
-            color_discrete_sequence=["#4CAF50", "#2196F3", "#FF9800"]
-        )
-        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-        st.plotly_chart(fig, use_container_width=True)
+        chart_id = "assets_pie_chart"
+        chart_html = f"""
+        <canvas id="{chart_id}" style="max-height: 300px;"></canvas>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+        const ctx = document.getElementById('{chart_id}').getContext('2d');
+        new Chart(ctx, {{
+            type: 'pie',
+            data: {{
+                labels: {assets_data_filtered["Category"]},
+                datasets: [{{
+                    data: {assets_data_filtered["Amount"]},
+                    backgroundColor: ["#4CAF50", "#2196F3", "#FF9800"],
+                    borderColor: ["#388E3C", "#1976D2", "#F57C00"],
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                plugins: {{
+                    legend: {{ position: 'bottom' }},
+                    title: {{ display: true, text: 'Assets Breakdown ($)' }}
+                }}
+            }}
+        }});
+        </script>
+        """
+        html(chart_html, height=350)
     else:
         st.info("No assets entered yet.")
     st.subheader("Totals")
