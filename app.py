@@ -17,6 +17,22 @@ ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lo
 
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="wide")
 
+# CSS for confirm buttons
+st.markdown("""
+    <style>
+    .stButton > button[kind="primary"] {
+        background-color: #4CAF50;
+        color: white;
+        border-radius: 5px;
+        padding: 10px 20px;
+        font-weight: bold;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #45a049;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "question_answer_logic_FINAL_UPDATED.json"
 REC_PATH = ROOT / "recommendation_logic_FINAL_MASTER_UPDATED.json"
@@ -84,13 +100,13 @@ def _merge_conditions_from_cost_planner() -> dict[str, list[str]]:
         for c in st.session_state.get("canon_conditions", []) or []:
             if c in valid and c not in conditions:
                 conditions.append(c)
-        for kind in ("al", "mc"):
+        for kind in ("al", "mc", "ih"):
             vals = st.session_state.get(f"{kind}_conditions_saved_{pid}")
             if isinstance(vals, list):
                 for c in vals:
                     if c in valid and c not in conditions:
                         conditions.append(c)
-        for k in (f"{pid}_al_chronic", f"{pid}_mc_chronic"):
+        for k in (f"{pid}_al_chronic", f"{pid}_mc_chronic", f"{pid}_ih_chronic"):
             val = st.session_state.get(k)
             if val in ("Diabetes", "Parkinson's") and val not in conditions:
                 conditions.append(val)
@@ -327,7 +343,7 @@ def render_pfma():
                 default=derived["adls"],
                 key=f"pfma_adls_{pid}",
             )
-        if st.button("Confirm Guided Care Plan", key="pfma_guided_confirm"):
+        if st.button("Confirm Guided Care Plan", key="pfma_guided_confirm", type="primary"):
             for p in people:
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
@@ -358,7 +374,7 @@ def render_pfma():
                 index=["None", "Walker", "Wheelchair"].index(derived["mobility"]),
                 key=f"pfma_mobility_{pid}",
             )
-        if st.button("Confirm Cost Planner", key="pfma_cost_confirm"):
+        if st.button("Confirm Cost Planner", key="pfma_cost_confirm", type="primary"):
             for p in people:
                 pid = p["id"]
                 s.pfma_conditions = {**s.get("pfma_conditions", {}), pid: s[f"pfma_conditions_{pid}"]}
@@ -429,7 +445,7 @@ def render_pfma():
                 key=f"pfma_sleep_{pid}",
                 help="Sleep patterns guide nighttime care"
             )
-        if st.button("Confirm Care Needs & Daily Support", key="pfma_needs_confirm"):
+        if st.button("Confirm Care Needs & Daily Support", key="pfma_needs_confirm", type="primary"):
             for p in people:
                 pid = p["id"]
                 s.pfma_symptoms = {**s.get("pfma_symptoms", {}), pid: s[f"pfma_symptoms_{pid}"]}
@@ -479,7 +495,7 @@ def render_pfma():
                 key=f"pfma_radius_{pid}",
                 help="This narrows down care locations"
             )
-        if st.button("Confirm Care Preferences", key="pfma_preferences_confirm"):
+        if st.button("Confirm Care Preferences", key="pfma_preferences_confirm", type="primary"):
             for p in people:
                 pid = p["id"]
                 s.pfma_settings = {**s.get("pfma_settings", {}), pid: s[f"pfma_settings_{pid}"]}
@@ -531,7 +547,7 @@ def render_pfma():
                     placeholder="E.g., John Smith",
                     help="Provide the name of your POA/DPOA"
                 )
-        if st.button("Confirm Household & Legal Basics", key="pfma_household_confirm"):
+        if st.button("Confirm Household & Legal Basics", key="pfma_household_confirm", type="primary"):
             for p in people:
                 pid = p["id"]
                 s.pfma_marital = {**s.get("pfma_marital", {}), pid: s[f"pfma_marital_{pid}"]}
@@ -571,7 +587,7 @@ def render_pfma():
         st.checkbox("Long-term care insurance", key="pfma_ltc", value=s.get("pfma_ltc", False), help="Check if you have an LTC policy")
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
         st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", help="Check if you’re interested in Medicaid support")
-        if st.button("Confirm Benefits & Coverage", key="pfma_benefits_confirm"):
+        if st.button("Confirm Benefits & Coverage", key="pfma_benefits_confirm", type="primary"):
             s.pfma_optional = s.get("pfma_optional", {})
             s.pfma_optional.update({
                 "budget": s.get("pfma_budget", ""),
@@ -590,7 +606,7 @@ def render_pfma():
             st.text_input("Best phone number", key="pfma_phone_confirm", value=s.get("pfma_phone", ""), placeholder="E.g., (555) 123-4567", help="We’ll call at your preferred time")
             st.text_input("Email (optional)", key="pfma_email_confirm", value=s.get("pfma_email", ""), placeholder="E.g., taylor@example.com", help="Optional for email communication")
             st.text_input("Referral name (optional)", key="pfma_referral_name_confirm", value=s.get("pfma_referral_name", ""), placeholder="E.g., doctor, friend, or organization", help="Who referred you to us?")
-            if st.button("Confirm Personal Information", key="pfma_personal_confirm"):
+            if st.button("Confirm Personal Information", key="pfma_personal_confirm", type="primary"):
                 s.pfma_optional = s.get("pfma_optional", {})
                 s.pfma_optional.update({
                     "confirmed_name": s.get("pfma_name_confirm", ""),
@@ -601,7 +617,7 @@ def render_pfma():
                 s.pfma_confirmed_sections["pfma_name_confirm"] = True
                 st.success("You just earned the Personal Info Star badge! Keep going!")
     st.divider()
-    if st.button("Save optional details", key="pfma_optional_save"):
+    if st.button("Save optional details", key="pfma_optional_save", type="primary"):
         s.pfma_optional = {
             "care_type": s.get("pfma_care_type", {}),
             "adls": s.get("pfma_adls", {}),
@@ -705,7 +721,7 @@ Choosing senior living or in-home support can feel overwhelming.
 **What happens next**
 1. Answer quick care questions → we recommend a care type.
 2. Review costs for that scenario (you can switch).
-3. (Optional) Add income, benefits, assets, and home decisions.
+3. Add income, benefits, assets, and home decisions.
 4. See a detailed breakdown and adjust anything.
 """
     )
@@ -835,7 +851,7 @@ elif st.session_state.step == "calculator":
         if st.button("Schedule with an Advisor", key="calc_pfma_btn"):
             st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "household":
-    st.header("Household & Budget (optional)")
+    st.header("Household & Budget")
     st.caption("Add income, benefits, assets, home decisions, and other costs to see affordability. You can skip this.")
     if asset_engine is None:
         st.warning("The household budgeting feature is unavailable because asset_engine.py is missing or failed to load.")
@@ -888,7 +904,9 @@ elif st.session_state.step == "breakdown":
         elif scenario == "in_home":
             hrs = s.get(f"ih_hours_per_day_{pid}", s.get("ih_hours_per_day", 4)); days = s.get(f"ih_days_per_month_{pid}", s.get("ih_days_per_month", 20))
             ctype = s.get(f"ih_caregiver_type_{pid}", s.get("ih_caregiver_type", "Agency")).title()
-            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}"
+            cond = s.get(f"ih_conditions_saved_{pid}", s.get("ih_conditions"))
+            cond_str = ", ".join(cond) if isinstance(cond, list) else (cond or "—")
+            detail = f"{hrs} hrs/day × {days} days/mo, Caregiver: {ctype}, Conditions: {cond_str}"
         else:
             detail = "—"
         care_rows.append({"Person": name, "Scenario": scenario.replace('_',' ').title(), "Details": detail, "Monthly Cost": money(cost)})
