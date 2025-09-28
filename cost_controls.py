@@ -248,4 +248,60 @@ def _panel_memory_care(pid: str, name: str, lf: float) -> int:
     with c2:
         default_conditions = st.session_state.get(f"mc_conditions_saved_{pid}", [])
         if default_conditions is None:
-            default_conditions
+            default_conditions = [seeds["chronic_single"]] if seeds["chronic_single"] in {"Diabetes", "Parkinson's"} else []
+        mc_conditions = st.multiselect(
+            f"{name} • Chronic conditions",
+            CONDITION_OPTIONS,
+            default=default_conditions,
+            format_func=format_condition_label,
+            key=f"mc_conditions_{pid}",
+            max_selections=5,
+        )
+        mc_chronic_for_engine = _derive_chronic_for_engine(mc_conditions)
+        st.session_state[f"{pid}_mc_chronic"] = mc_chronic_for_engine
+        _record_personal_copy(pid, mc_conditions, "mc")
+        _union_into_canon(mc_conditions)
+    from engines import CalculatorEngine
+    calc = CalculatorEngine()
+    inputs = _inputs_namespace(
+        care_type="memory_care",
+        location_factor=lf,
+        mc_level=st.session_state[f"{pid}_mc_level"],
+        mc_mobility=st.session_state[f"{pid}_mc_mobility"],
+        mc_chronic=st.session_state[f"{pid}_mc_chronic"],
+    )
+    return int(calc.monthly_cost(inputs))
+
+def render_costs_for_active_recommendations(*, calculator=None, **_ignore) -> int:
+    """
+    Draw per-person scenario controls and compute monthly costs through CalculatorEngine.
+    Returns combined total. Updates st.session_state.person_costs.
+    Accepts and ignores extra kwargs like planner= to stay compatible with app.py.
+    """
+    _init_person_costs()
+    lf = float(st.session_state.get("location_factor", 1.0))
+    people = st.session_state.get("people", [])
+    planner_results = st.session_state.get("planner_results", {})
+    combined = 0
+    for p in people:
+        pid = p["id"]
+        name = p["display_name"]
+        rec = planner_results.get(pid)
+        recommended = getattr(rec, "care_type", "in_home") if rec else "in_home"
+        chosen = _get_override(pid, recommended)
+        st.subheader(f"{name} — Scenario: {chosen.replace('_',' ').title()}")
+        if chosen == "assisted_living":
+            monthly = _panel_assisted_living(pid, name, lf)
+        elif chosen == "memory_care":
+            monthly = _panel_memory_care(pid, name, lf)
+        elif chosen == "in_home":
+            monthly = _panel_in_home(pid, name, lf)
+        else:
+            monthly = 0
+        st.metric("Estimated Monthly Cost", f"${monthly:,.0f}")
+        st.session_state.person_costs[pid] = int(monthly)
+        combined += int(monthly)
+        st.divider()
+    st.subheader("Combined Total")
+    st.metric("Estimated Combined Monthly Cost", f"${combined:,.0f}")
+    return combined
