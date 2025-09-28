@@ -1,188 +1,28 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-# === Tools (PFMA): Export + AI mock ===
-def _money_fmt(n):
-    try: return f"${int(n):,}"
-    except Exception:
-        try: return f"${float(n):,.0f}"
-        except Exception: return str(n)
-
-def _build_export_payload_pfma():
-    s = st.session_state
-    # compute_totals is defined elsewhere in app; make a light shim if missing
-    if "compute_totals" not in globals():
-        def compute_totals(s):
-            return {"inc_A":0,"inc_B":0,"inc_house":0,"va_A":0,"va_B":0,"rm_monthly":0,"income_total":0,
-                    "care_total":0,"home_monthly":0,"mods_monthly":0,"other_monthly":0,"monthly_costs_total":0,
-                    "assets_common":0,"assets_detail":0,"sale_proceeds":0,"rm_lump":0,"rm_fees_oop":0,
-                    "mods_upfront":0,"mods_deduct":False,"assets_total_effective":0,"gap":0,"months_runway":0,"years":0,"rem":0}
-    t = compute_totals(s)
-    return {
-        "income": {
-            "individual_A": t.get("inc_A",0),
-            "individual_B": t.get("inc_B",0),
-            "household": t.get("inc_house",0),
-            "va_A": t.get("va_A",0),
-            "va_B": t.get("va_B",0),
-            "reverse_mortgage_monthly": t.get("rm_monthly",0),
-            "total": t.get("income_total",0),
-        },
-        "costs": {
-            "care": t.get("care_total",0),
-            "home": t.get("home_monthly",0),
-            "mods_monthly": t.get("mods_monthly",0),
-            "other": t.get("other_monthly",0),
-            "total": t.get("monthly_costs_total",0),
-        },
-        "assets": {
-            "common": t.get("assets_common",0),
-            "less_common": t.get("assets_detail",0),
-            "home_sale_proceeds_applied": t.get("sale_proceeds",0),
-            "reverse_mortgage_lump_applied": t.get("rm_lump",0),
-            "rm_fees_out_of_pocket": t.get("rm_fees_oop",0),
-            "mods_upfront_deducted": t.get("mods_upfront",0) if t.get("mods_deduct",False) else 0,
-            "total_effective": t.get("assets_total_effective",0),
-        },
-        "picture": {
-            "gap": t.get("gap",0),
-            "runway_years": t.get("years",0),
-            "runway_months_remainder": t.get("rem",0),
-            "runway_months": t.get("months_runway",0),
-        },
-        "meta": {
-            "home_decision": s.get("home_decision",""),
-            "rm_plan": s.get("rm_plan",""),
-        }
-    }
-
-def _render_tools_pfma():
+# --- PFMA Tools CSS ---
+def _inject_pfma_css():
     try:
-        if not (EXPORT_ENABLED or AI_HANDOFF_ENABLED):
-            return
-        payload = _build_export_payload_pfma()
-        inc, cst, ast, pic, meta = payload["income"], payload["costs"], payload["assets"], payload["picture"], payload["meta"]
-        colA, colB = st.columns(2)
-        with colA:
-            st.markdown("#### Exports")
-            if EXPORT_ENABLED:
-                # CSV
-                csv_buf = StringIO()
-                w = csv.writer(csv_buf)
-                w.writerow(["Section","Item","Amount"])
-                for k, v in inc.items():   w.writerow(["Income", k, v])
-                for k, v in cst.items():   w.writerow(["Costs", k, v])
-                for k, v in ast.items():   w.writerow(["Assets", k, v])
-                w.writerow(["Picture","gap", pic["gap"]])
-                w.writerow(["Picture","runway_months", pic["runway_months"]])
-                st.download_button("Export CSV", data=csv_buf.getvalue().encode("utf-8"), file_name="senior_navigator_export.csv", mime="text/csv", key="pfm_dl_csv")
-                st.caption("CSV for spreadsheets.")
-                # Print HTML
-                def row(k,v): return f"<tr><td>{k}</td><td>{_money_fmt(v)}</td></tr>"
-                html = ['<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
-                        '<style>body{font-family:Arial, sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>']
-                html.append('<h2>Financial Breakdown</h2>')
-                html.append('<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>')
-                html += [row("Individual A", inc["individual_A"]), row("Individual B", inc["individual_B"]), row("Household", inc["household"]), row("VA — A", inc["va_A"]), row("VA — B", inc["va_B"]), row("Reverse mortgage (monthly)", inc["reverse_mortgage_monthly"]), f"<tr><th>Total</th><th>{_money_fmt(inc['total'])}</th></tr>", "</table>"]
-                html.append('<h3>Monthly Costs</h3><table><tr><th>Category</th><th>Monthly</th></tr>')
-                html += [row("Care", cst["care"]), row("Home", cst["home"]), row("Home modifications", cst["mods_monthly"]), row("Other", cst["other"]), f"<tr><th>Total</th><th>{_money_fmt(cst['total'])}</th></tr>", "</table>"]
-                html.append('<h3>Assets</h3><table><tr><th>Assets</th><th>Amount</th></tr>')
-                html += [row("Common", ast["common"]), row("Less common", ast["less_common"]), row("Home sale net proceeds (applied)", ast["home_sale_proceeds_applied"]), row("Reverse mortgage lump (applied)", ast["reverse_mortgage_lump_applied"]), f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_money_fmt(ast['rm_fees_out_of_pocket'])}</td></tr>", f"<tr><th>Assets Total (effective)</th><th>{_money_fmt(ast['total_effective'])}</th></tr>", "</table>"]
-                html.append("<h3>Your Financial Picture</h3>")
-                if pic["gap"] <= 0:
-                    html.append(f"<p><b>Monthly surplus:</b> {_money_fmt(-pic['gap'])}</p>")
-                else:
-                    ym = f"{pic['runway_years']} years {pic['runway_months_remainder']} months" if pic['runway_years'] > 0 else f"{pic['runway_months_remainder']} months"
-                    html.append(f"<p><b>Monthly gap:</b> {_money_fmt(pic['gap'])}</p>")
-                    html.append(f"<p><b>Estimated runway from assets:</b> {ym}</p>")
-                html.append("</body></html>")
-                st.download_button("Export Print View (HTML)", data=("\n".join(html)).encode("utf-8"), file_name="senior_navigator_export.html", mime="text/html", key="pfm_dl_html")
-                st.caption("Print-friendly; use your browser to save as PDF.")
-        with colB:
-            st.markdown("#### AI Agent handoff")
-            if AI_HANDOFF_ENABLED:
-                preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers","Tune in-home care hours"], key="pfm_ai_preset")
-                preview = {
-                    "goal": preset,
-                    "context": {
-                        "income_total": inc["total"],
-                        "costs_total": cst["total"],
-                        "gap": pic["gap"],
-                        "assets_total_effective": ast["total_effective"],
-                        "home_decision": meta.get("home_decision",""),
-                        "rm_plan": meta.get("rm_plan",""),
-                    },
-                    "request": "Suggest 3 concrete options with pros/cons and a first step."
+        st.markdown(
+            """
+            <style>
+                .pfm-card {
+                    border: 1px solid #e6e6e6;
+                    border-radius: 12px;
+                    padding: 16px 18px;
+                    background: #fafafa;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+                    margin-bottom: 16px;
                 }
-                st.text_area("Prompt that would be sent", value=json.dumps(preview, indent=2), height=180, key="pfm_prompt_preview")
-                if st.button("Send to AI Agent (mock)", key="pfm_ai_send"):
-                    tmsg = []
-                    opener = f"I see total monthly income {_money_fmt(inc['total'])} and costs {_money_fmt(cst['total'])}. "
-                    if pic["gap"] <= 0:
-                        opener += f"You have a monthly surplus of {_money_fmt(-pic['gap'])}. We can explore quality upgrades, reserves, or pacing asset use."
-                    else:
-                        opener += f"You have a monthly gap of {_money_fmt(pic['gap'])}. Effective assets are {_money_fmt(ast['total_effective'])}, roughly covering {pic['runway_years']}y {pic['runway_months_remainder']}m at current burn."
-                    if meta.get("home_decision"):
-                        opener += f" You selected **{meta['home_decision']}**"
-                        if meta.get("rm_plan"):
-                            opener += f" with **{meta['rm_plan']}** plan"
-                        opener += "."
-                    st.session_state["pfm_ai_transcript"] = [("user", preset), ("agent", opener)]
-                chips = st.columns(3)
-                if chips[0].button("Close the funding gap", key="pfm_chip_gap"): _pfm_ai_chip("gap", inc, cst, ast, pic, meta)
-                if chips[1].button("Compare housing options", key="pfm_chip_house"): _pfm_ai_chip("housing", inc, cst, ast, pic, meta)
-                if chips[2].button("Maximize benefits", key="pfm_chip_ben"): _pfm_ai_chip("benefits", inc, cst, ast, pic, meta)
-                chips2 = st.columns(2)
-                if chips2[0].button("Explain my numbers", key="pfm_chip_exp"): _pfm_ai_chip("explain", inc, cst, ast, pic, meta)
-                if chips2[1].button("Tune in-home care hours", key="pfm_chip_hours"): _pfm_ai_chip("hours", inc, cst, ast, pic, meta)
-                st.caption("Mock only — nothing leaves your browser.")
-        with st.expander("Conversation preview", expanded=False):
-            tx = st.session_state.get("pfm_ai_transcript", [])
-            if not tx: st.write("_No messages yet. Use the Send button or chips above._")
-            else:
-                for role, msg in tx:
-                    st.markdown(("**You:** " if role=="user" else "**Agent:** ") + str(msg))
-    except Exception as e:
-        st.warning(f"Tools section unavailable: {e}")
-
-def _pfm_ai_chip(code, inc, cst, ast, pic, meta):
-    tx = st.session_state.get("pfm_ai_transcript", [])
-    if code == "gap":
-        u = "Close the funding gap"
-        a = ("Top levers: (1) increase income (RM monthly, rental, annuity), (2) reduce costs (care hours, agency options), "
-             "(3) use assets (sale proceeds or RM lump). Which lever do you want to try first?")
-    elif code == "housing":
-        u = "Compare housing options"
-        a = (f"At current inputs: **Keep** adds home costs {_money_fmt(cst.get('home',0))}/mo; "
-             f"**Sell** shows net proceeds {_money_fmt(ast.get('home_sale_proceeds_applied',0))} (home costs ≈ $0/mo); "
-             f"**Reverse Mortgage** (monthly) adds {_money_fmt(inc.get('reverse_mortgage_monthly',0))}/mo. Want a side-by-side card?")
-    elif code == "benefits":
-        u = "Maximize benefits"
-        a = (f"You entered VA monthly A={_money_fmt(inc.get('va_A',0))}, B={_money_fmt(inc.get('va_B',0))}. "
-             "Do you want an Aid & Attendance checklist (informational)?")
-    elif code == "explain":
-        u = "Explain my numbers"
-        a = (f"Monthly costs = Care {_money_fmt(cst.get('care',0))} + Home {_money_fmt(cst.get('home',0))} + "
-             f"Mods {_money_fmt(cst.get('mods_monthly',0))} + Other {_money_fmt(cst.get('other',0))}. "
-             f"Monthly income = A {_money_fmt(inc.get('individual_A',0))} + B {_money_fmt(inc.get('individual_B',0))} + "
-             f"Household {_money_fmt(inc.get('household',0))} + VA {_money_fmt(inc.get('va_A',0)+inc.get('va_B',0))} + "
-             f"RM {_money_fmt(inc.get('reverse_mortgage_monthly',0))}.")
-    else:
-        u = "Tune in-home care hours"
-        a = ("We can model care hours. For example, try reducing in‑home hours by 10–20% or switching to a blended mix. "
-             "Would you like me to show a what‑if next?")
-    tx.extend([("user", u), ("agent", a)])
-    st.session_state["pfm_ai_transcript"] = tx
-
-
-# === Tools feature flags ===
-EXPORT_ENABLED = True if 'EXPORT_ENABLED' not in globals() else EXPORT_ENABLED
-AI_HANDOFF_ENABLED = True if 'AI_HANDOFF_ENABLED' not in globals() else AI_HANDOFF_ENABLED
-
-
-import json
-from io import StringIO
-import csv
+                .pfm-card h4 { margin-top: 4px; margin-bottom: 12px; }
+                .pfm-muted { color:#6b7280; font-size:0.9rem; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
 
 
 import os
@@ -384,7 +224,6 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
 # ---------------- PFMA render ----------------
 def render_pfma():
     st.header("Plan for My Advisor")
-    _render_tools_pfma()
     st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
 
     s = st.session_state
