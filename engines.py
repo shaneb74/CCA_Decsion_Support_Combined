@@ -337,3 +337,9 @@ if __name__ == "__main__":
         pe = PlannerEngine(str(qa), str(rc))
         ok = pe.run({"q1":1,"q2":1,"q3":1,"q4":1,"q5":1,"q6":1,"q7":1,"q8":1,"q9":1})
         print("no-flags ->", ok.care_type, ok.scores)
+
+# --- Injected safety override ---
+def dependence_override(flags: set[str]) -> bool:
+    """Return True if high dependence risk warrants an assisted living override."""
+    _dep = {"high_dependence","high_mobility_dependence","no_support","severe_cognitive_risk","high_safety_concern"}
+    return sum(1 for f in _dep if f in flags) >= 2

@@ -1,3 +1,4 @@
+
 {
   "lookups": {
     "va_categories": {
@@ -59,19 +60,6 @@
         {"field":"life_cash_value","label":"Life insurance cash value","kind":"currency","default":0},
         {"field":"hsa_balance","label":"HSA balance","kind":"currency","default":0},
         {"field":"other_assets","label":"Other assets (catch‑all)","kind":"currency","default":0}
-      ]
-    },
-    {
-      "id": "group_liabilities",
-      "module": "liabilities",
-      "label": "Liabilities",
-      "prompt": "Enter outstanding debts to adjust net assets.",
-      "fields": [
-        {"field":"mortgage_balance","label":"Mortgage balance","kind":"currency","default":0},
-        {"field":"credit_card_debt","label":"Credit card debt","kind":"currency","default":0},
-        {"field":"personal_loans","label":"Personal loans","kind":"currency","default":0},
-        {"field":"auto_loans","label":"Auto loans","kind":"currency","default":0},
-        {"field":"other_liabilities","label":"Other liabilities","kind":"currency","default":0}
       ]
     }
   ]

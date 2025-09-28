@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 import traceback
 import streamlit as st
-import pandas as pd
-from streamlit.components.v1 import html
 
 from cost_controls import (
     render_location_control,
@@ -19,7 +17,7 @@ ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lo
 
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="wide")
 
-# CSS for confirm buttons, gamification animations, and chart styling
+# CSS for confirm buttons and gamification animations
 st.markdown("""
     <style>
     .stButton > button[kind="primary"] {
@@ -376,9 +374,9 @@ def render_pfma():
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Care Plan Confirmer badge! Keep going!")
-            st.rerun()
+            st.rerun()  # Explicit rerun to ensure UI updates
     with st.expander("Confirm Cost Planner", expanded=s.get("expander_pfma_conditions", False)):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
@@ -411,9 +409,9 @@ def render_pfma():
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
-            st.rerun()
+            st.rerun()  # Explicit rerun to ensure UI updates
     with st.expander("Care Needs & Daily Support", expanded=s.get("expander_pfma_symptoms", False)):
         st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
         for p in people:
@@ -489,9 +487,9 @@ def render_pfma():
                 s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
                 s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Care Needs Expert badge! Keep going!")
-            st.rerun()
+            st.rerun()  # Explicit rerun to ensure UI updates
     with st.expander("Care Preferences", expanded=s.get("expander_pfma_settings", False)):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
         for p in people:
@@ -538,9 +536,9 @@ def render_pfma():
                 s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
                 s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Preferences Pro badge! Keep going!")
-            st.rerun()
+            st.rerun()  # Explicit rerun to ensure UI updates
     with st.expander("Household & Legal Basics", expanded=s.get("expander_pfma_marital", False)):
         st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
         for p in people:
@@ -592,9 +590,9 @@ def render_pfma():
                 s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
                 s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Household Hero badge! Keep going!")
-            st.rerun()
+            st.rerun()  # Explicit rerun to ensure UI updates
     with st.expander("Benefits & Coverage", expanded=s.get("expander_pfma_ltc", False)):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
@@ -635,9 +633,9 @@ def render_pfma():
                 "has_va": s.get("pfma_va", False),
                 "medicaid_interest": s.get("pfma_medicaid", False),
             })
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
             st.success("You just earned the Benefits Boss badge! Keep going!")
-            st.rerun()
+            st.rerun()  # Explicit rerun to ensure UI updates
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information", expanded=s.get("expander_pfma_name_confirm", False)):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
@@ -654,9 +652,9 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections  # Force state update
                 st.success("You just earned the Personal Info Star badge! Keep going!")
-                st.rerun()
+                st.rerun()  # Explicit rerun to ensure UI updates
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save", type="primary"):
         s.pfma_optional = {
@@ -965,17 +963,6 @@ elif st.session_state.step == "breakdown":
         {"Category":"Other monthly costs", "Monthly":money(other_monthly)},
         {"Category":"Subtotal (additional)", "Monthly":money(addl_total)},
     ])
-    # Monthly Costs Bar Chart
-    st.subheader("Monthly Costs Breakdown")
-    monthly_costs_data = {
-        "Category": ["Care Costs", "Home Decisions", "Home Modifications", "Other Monthly"],
-        "Amount": [care_total, home_monthly, mods_monthly, other_monthly]
-    }
-    if any(amount > 0 for amount in monthly_costs_data["Amount"]):
-        df = pd.DataFrame(monthly_costs_data)
-        st.bar_chart(df.set_index("Category")["Amount"], color="#4CAF50")
-    else:
-        st.info("No monthly costs entered yet.")
     st.subheader("Monthly Income")
     inc_A = int(s.get("a_ss",0)) + int(s.get("a_pn",0)) + int(s.get("a_other",0))
     inc_B = int(s.get("b_ss",0)) + int(s.get("b_pn",0)) + int(s.get("b_other",0))
@@ -990,111 +977,18 @@ elif st.session_state.step == "breakdown":
         {"Source":"VA — B","Monthly":money(va_B)},
         {"Source":"Total Income","Monthly":money(income_total)},
     ])
-    # Income Sources Pie Chart
-    st.subheader("Income Sources Breakdown")
-    income_data = {
-        "Source": ["Individual A", "Individual B", "Household", "VA A", "VA B"],
-        "Amount": [inc_A, inc_B, inc_house, va_A, va_B]
-    }
-    income_data_filtered = {
-        "Source": [source for source, amount in zip(income_data["Source"], income_data["Amount"]) if amount > 0],
-        "Amount": [amount for amount in income_data["Amount"] if amount > 0]
-    }
-    if income_data_filtered["Amount"]:
-        chart_id = "income_pie_chart"
-        chart_html = f"""
-        <canvas id="{chart_id}" style="max-height: 300px;"></canvas>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <script>
-        const ctx = document.getElementById('{chart_id}').getContext('2d');
-        new Chart(ctx, {{
-            type: 'pie',
-            data: {{
-                labels: {income_data_filtered["Source"]},
-                datasets: [{{
-                    data: {income_data_filtered["Amount"]},
-                    backgroundColor: ["#4CAF50", "#2196F3", "#FF9800", "#F44336", "#9C27B0"],
-                    borderColor: ["#388E3C", "#1976D2", "#F57C00", "#D32F2F", "#7B1FA2"],
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{
-                plugins: {{
-                    legend: {{ position: 'bottom' }},
-                    title: {{ display: true, text: 'Income Sources ($)' }}
-                }}
-            }}
-        }});
-        </script>
-        """
-        html(chart_html, height=350)
-    else:
-        st.info("No income sources entered yet.")
-    st.subheader("Assets")
-    assets_common = int(s.get("assets_common_total", 0))
-    assets_detail = int(s.get("assets_detailed_total", 0))
-    home_sale_proceeds = int(s.get("home_sale_net_proceeds", 0))
-    mods_deduct = s.get("mods_deduct_assets", False)
-    assets_total = assets_common + assets_detail + (home_sale_proceeds if not mods_deduct else max(0, home_sale_proceeds - int(s.get("mods_upfront_total", 0))))
-    st.table([
-        {"Category": "Common Assets", "Amount": money(assets_common)},
-        {"Category": "Detailed Assets", "Amount": money(assets_detail)},
-        {"Category": "Home Sale Proceeds", "Amount": money(home_sale_proceeds)},
-        {"Category": "Total Assets", "Amount": money(assets_total)},
-    ])
-    # Assets Pie Chart
-    st.subheader("Assets Breakdown")
-    assets_data = {
-        "Category": ["Common Assets", "Detailed Assets", "Home Sale Proceeds"],
-        "Amount": [assets_common, assets_detail, home_sale_proceeds]
-    }
-    assets_data_filtered = {
-        "Category": [cat for cat, amount in zip(assets_data["Category"], assets_data["Amount"]) if amount > 0],
-        "Amount": [amount for amount in assets_data["Amount"] if amount > 0]
-    }
-    if assets_data_filtered["Amount"]:
-        chart_id = "assets_pie_chart"
-        chart_html = f"""
-        <canvas id="{chart_id}" style="max-height: 300px;"></canvas>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <script>
-        const ctx = document.getElementById('{chart_id}').getContext('2d');
-        new Chart(ctx, {{
-            type: 'pie',
-            data: {{
-                labels: {assets_data_filtered["Category"]},
-                datasets: [{{
-                    data: {assets_data_filtered["Amount"]},
-                    backgroundColor: ["#4CAF50", "#2196F3", "#FF9800"],
-                    borderColor: ["#388E3C", "#1976D2", "#F57C00"],
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{
-                plugins: {{
-                    legend: {{ position: 'bottom' }},
-                    title: {{ display: true, text: 'Assets Breakdown ($)' }}
-                }}
-            }}
-        }});
-        </script>
-        """
-        html(chart_html, height=350)
-    else:
-        st.info("No assets entered yet.")
     st.subheader("Totals")
     monthly_need = care_total + addl_total
     gap = monthly_need - income_total
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Monthly Care + Selected Costs", money(monthly_need))
-    col2.metric("Total Monthly Income (incl. VA)", money(income_total))
-    col3.metric("Estimated Monthly Gap", money(gap))
-    if gap > 0 and assets_total > 0:
-        months = int(assets_total // max(gap, 1)); years = months // 12; rem = months % 12
-        msg = f"Estimated runway from assets: {years} years, {rem} months" if years > 0 else f"Estimated runway from assets: {rem} months"
+    if gap <= 0:
+        st.subheader(f"Monthly surplus: {money(-gap)}")
     else:
-        msg = "Estimated runway from assets: 0 months"
-    st.subheader(msg)
+        if assets_total > 0:
+            months = int(assets_total // max(gap, 1)); years = months // 12; rem = months % 12
+            msg = f"Estimated runway from assets: {years} years {rem} months" if years > 0 else f"Estimated runway from assets: {rem} months"
+        else:
+            msg = "Estimated runway from assets: 0 months"
+        st.subheader(msg)
     st.divider()
     cta1, cta2 = st.columns(2)
     with cta1:
