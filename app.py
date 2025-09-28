@@ -1,5 +1,12 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
+import streamlit as st
+import json
+import csv
+from io import StringIO
+import os
+from pathlib import Path
+
 
 # ---- PFMA tools alias (non-recursive) ----
 # If the canonical renderer doesn't exist but the alt one does, create an alias.
