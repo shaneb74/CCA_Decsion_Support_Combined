@@ -4,7 +4,6 @@ from __future__ import annotations
 
 # == PFMA Tools v2 (stable, read-only, unique widget keys) ==
 def _pfma_tools_block_v2():
-    # render-once guard; PFMA resets this each run
     if st.session_state.get("_pfma_tools_rendered", False):
         return
     st.session_state["_pfma_tools_rendered"] = True
@@ -13,11 +12,9 @@ def _pfma_tools_block_v2():
         try:
             if v is None or v == "":
                 return default
-            if isinstance(v, (int, float)):
-                return int(v)
+            if isinstance(v, (int, float)): return int(v)
             s = str(v).replace("$","").replace(",","").strip()
-            if s == "":
-                return default
+            if s == "": return default
             return int(float(s))
         except Exception:
             return default
@@ -30,7 +27,7 @@ def _pfma_tools_block_v2():
 
     s = st.session_state
 
-    # Income (with synonyms)
+    # Income (synonyms)
     inc_A = _to_int(_g(s,"inc_A")) or (_to_int(_g(s,"a_ss","ind_a_ss")) + _to_int(_g(s,"a_pn","ind_a_pn")) + _to_int(_g(s,"a_other","ind_a_other")))
     inc_B = _to_int(_g(s,"inc_B")) or (_to_int(_g(s,"b_ss","ind_b_ss")) + _to_int(_g(s,"b_pn","ind_b_pn")) + _to_int(_g(s,"b_other","ind_b_other")))
     inc_house = _to_int(_g(s,"inc_house")) or (_to_int(_g(s,"hh_rent","rent_income")) + _to_int(_g(s,"hh_annuity")) + _to_int(_g(s,"hh_invest","hh_investments")) + _to_int(_g(s,"hh_trust")) + _to_int(_g(s,"hh_other")))
@@ -39,14 +36,14 @@ def _pfma_tools_block_v2():
     rm_monthly = _to_int(_g(s,"rm_monthly","rm_monthly_income"))
     income_total = inc_A + inc_B + inc_house + va_A + va_B + rm_monthly
 
-    # Costs (with synonyms)
+    # Costs (synonyms)
     care_total = _to_int(_g(s,"care_total","care_monthly_total"))
     home_monthly = _to_int(_g(s,"home_monthly","home_monthly_total"))
     mods_monthly = _to_int(_g(s,"mods_monthly","mods_monthly_total"))
     other_monthly = _to_int(_g(s,"other_monthly","other_monthly_total"))
     monthly_costs_total = care_total + home_monthly + mods_monthly + other_monthly
 
-    # Assets (with synonyms)
+    # Assets (synonyms)
     assets_common = _to_int(_g(s,"assets_common","assets_common_total"))
     assets_detail = _to_int(_g(s,"assets_detail","assets_detailed_total","assets_less_common_total"))
     apply_sale = bool(_g(s,"apply_sale_to_assets","apply_home_proceeds","apply_net_proceeds","apply_home_sale_to_assets","apply_sale_net_to_assets","apply_home_sale"))
@@ -63,33 +60,26 @@ def _pfma_tools_block_v2():
     rem = months_runway % 12
 
     def _m(n):
-        try:
-            return f"${int(n):,}"
+        try: return f"${int(n):,}"
         except Exception:
-            try:
-                return f"${float(n):,.0f}"
-            except Exception:
-                return str(n)
+            try: return f"${float(n):,.0f}"
+            except Exception: return str(n)
 
-    # Minimal styling wrapper
     st.markdown(
         """
         <style>
         .pfma-card {border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafafa;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
         .pfma-card h4 { margin: 4px 0 12px 0; }
         </style>
-        """,
-        unsafe_allow_html=True
+        """, unsafe_allow_html=True
     )
 
     colA, colB = st.columns(2)
 
-    # Exports card
+    # Exports
     with colA:
         st.markdown("<div class='pfma-card'><h4>Exports</h4>", unsafe_allow_html=True)
-
-        buf = StringIO()
-        writer = csv.writer(buf)
+        buf = StringIO(); writer = csv.writer(buf)
         writer.writerow(["Section","Item","Amount"])
         for k,v in {"individual_A":inc_A,"individual_B":inc_B,"household":inc_house,"va_A":va_A,"va_B":va_B,"reverse_mortgage_monthly":rm_monthly,"total":income_total}.items():
             writer.writerow(["Income",k,v])
@@ -97,14 +87,11 @@ def _pfma_tools_block_v2():
             writer.writerow(["Costs",k,v])
         for k,v in {"common":assets_common,"less_common":assets_detail,"home_sale_proceeds_applied":sale_proceeds,"reverse_mortgage_lump_applied":rm_lump,"rm_fees_out_of_pocket":rm_fees_oop,"total_effective":assets_total_effective}.items():
             writer.writerow(["Assets",k,v])
-        writer.writerow(["Picture","gap",gap])
-        writer.writerow(["Picture","runway_months",months_runway])
-
+        writer.writerow(["Picture","gap",gap]); writer.writerow(["Picture","runway_months",months_runway])
         st.download_button("Export CSV", buf.getvalue().encode("utf-8"), "senior_navigator_export.csv", "text/csv", key="pfma_csv_v2")
         st.caption("CSV for spreadsheets.")
 
         def _row(lbl,val): return f"<tr><td>{lbl}</td><td>{_m(val)}</td></tr>"
-
         html_parts = [
             '<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
             '<style>body{font-family:Arial,sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>',
@@ -120,20 +107,15 @@ def _pfma_tools_block_v2():
             _row("Common", assets_common), _row("Less common", assets_detail), _row("Home sale net proceeds (applied)", sale_proceeds),
             _row("Reverse mortgage lump (applied)", rm_lump),
             f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>",
-            f"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>", "</table>"
+            f"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>", "</table>",
+            "</body></html>"
         ]
-        if gap > 0:
-            ym = f"{years} years {rem} months" if years else f"{rem} months"
-            html_parts.append(f"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>")
-        else:
-            html_parts.append(f"<p><b>Monthly surplus:</b> {_m(-gap)}.</p>")
-        html_parts.append("</body></html>")
         html_blob = "\n".join(html_parts)
         st.download_button("Export Print View (HTML)", html_blob.encode("utf-8"), "senior_navigator_export.html", "text/html", key="pfma_html_v2")
         st.caption("Print-friendly; use your browser to save as PDF.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # AI Agent card
+    # AI Agent
     with colB:
         st.markdown("<div class='pfma-card'><h4>AI Agent handoff</h4>", unsafe_allow_html=True)
         preset = st.selectbox("Prompt preset", ["Close the funding gap","Compare housing options","Maximize benefits","Explain my numbers","Tune in-home care hours"], key="pfma_preset_v2")
@@ -174,13 +156,13 @@ if "_render_pfma_tools_block" not in globals() and "_render_tools_pfma" in globa
 
 
 
-import os
 from pathlib import Path
 import traceback
 import streamlit as st
 import json
 import csv
 from io import StringIO
+import os
 
 from cost_controls import (
     render_location_control,
@@ -375,24 +357,13 @@ def _derive_adls_and_others(pid: str) -> dict[str, any]:
 
 # ---------------- PFMA render ----------------
 def render_pfma():
-    st.header("Plan for My Advisor")
+    st.header("Plan for My Advisor")st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
+
     # Reset guard so tools render once per run
     st.session_state["_pfma_tools_rendered"] = False
     with st.expander("Tools & AI Agent", expanded=True):
-        _pfma_tools_block_v2()st.caption("Schedule a time with an advisor. We’ll only ask what we need right now.")
+        _pfma_tools_block_v2()
 
-    s = st.session_state
-    people = s.get("people", [])
-    recs = s.get("planner_results", {})
-    overrides = s.get("care_overrides", {})
-
-    with st.expander("Your current plan summary", expanded=True):
-        if people and recs:
-            nice = {"none":"None","in_home":"In-home Care","assisted_living":"Assisted Living","memory_care":"Memory Care"}
-            for p in people:
-                pid, name = p["id"], p["display_name"]
-                rec = recs.get(pid)
-                scenario = overrides.get(pid, getattr(rec, "care_type", "in_home"))
                 st.write(f"**{name}:** {nice.get(scenario, scenario).title()}")
         else:
             st.info("No Guided Care Plan found. You can still book now.")
