@@ -347,7 +347,7 @@ def render_pfma():
             st.selectbox(
                 f"Confirm mobility needs for {name}",
                 ["None", "Walker", "Wheelchair"],
-                index=["None", "Walker", "Wheelchair"].index(mobility),
+                index=["None", "Walker", "Wheelchair"].index(mobility if mobility in ["None", "Walker", "Wheelchair"] else "None"),
                 key=f"pfma_mobility_{pid}",
             )
         if st.button("Confirm Cost Planner", key="pfma_cost_confirm"):
@@ -548,11 +548,14 @@ def render_pfma():
         st.checkbox("VA benefit (or potential eligibility)", key="pfma_va", value=s.get("pfma_va", False), help="Check if you’re a veteran or eligible spouse")
         st.checkbox("Medicaid or waiver interest", key="pfma_medicaid", help="Check if you’re interested in Medicaid support")
         if st.button("Confirm Benefits & Coverage", key="pfma_benefits_confirm"):
-            s.pfma_budget = s.get("pfma_budget")
-            s.pfma_primary_payer = s.get("pfma_primary_payer")
-            s.pfma_ltc = s.get("pfma_ltc", False)
-            s.pfma_va = s.get("pfma_va", False)
-            s.pfma_medicaid = s.get("pfma_medicaid", False)
+            s.pfma_optional = s.get("pfma_optional", {})
+            s.pfma_optional.update({
+                "budget": s.get("pfma_budget", ""),
+                "primary_payer": s.get("pfma_primary_payer", ""),
+                "has_ltc": s.get("pfma_ltc", False),
+                "has_va": s.get("pfma_va", False),
+                "medicaid_interest": s.get("pfma_medicaid", False),
+            })
             st.success("Benefits & Coverage confirmed!")
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information"):
@@ -599,8 +602,8 @@ def render_pfma():
             "alcohol": s.get("pfma_alcohol", {}),
             "poa_type": s.get("pfma_poa_type", {}),
             "poa_name": s.get("pfma_poa_name", {}),
-            "budget": s.get("pfma_budget"),
-            "primary_payer": s.get("pfma_primary_payer"),
+            "budget": s.get("pfma_budget", ""),
+            "primary_payer": s.get("pfma_primary_payer", ""),
             "has_ltc": s.get("pfma_ltc", False),
             "has_va": s.get("pfma_va", False),
             "medicaid_interest": s.get("pfma_medicaid", False),
