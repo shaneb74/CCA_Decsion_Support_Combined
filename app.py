@@ -17,7 +17,7 @@ ENABLE_PFMA_GAMIFICATION = os.environ.get("ENABLE_PFMA_GAMIFICATION", "true").lo
 
 st.set_page_config(page_title="Senior Navigator • Planner + Cost", page_icon="🧭", layout="wide")
 
-# CSS for confirm buttons
+# CSS for confirm buttons and gamification animations
 st.markdown("""
     <style>
     .stButton > button[kind="primary"] {
@@ -29,6 +29,16 @@ st.markdown("""
     }
     .stButton > button[kind="primary"]:hover {
         background-color: #45a049;
+    }
+    .stAlert {
+        animation: fadeIn 0.5s;
+    }
+    .badge {
+        animation: fadeIn 0.5s;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -317,9 +327,24 @@ def render_pfma():
         ]
         filled_count = sum(1 for section in optional_sections if section["key"] in s.pfma_confirmed_sections and s.pfma_confirmed_sections[section["key"]])
         total_sections = 6 if s.get("pfma_relationship") != "Self" else 7
+        st.write(f"Badges Earned: {filled_count}/{total_sections} 🏅")
         progress = filled_count / total_sections
         st.progress(progress, text=f"Progress: {filled_count}/{total_sections} sections completed – You’re helping us tailor your care plan!")
-    with st.expander("Confirm Guided Care Plan"):
+        # Visual progress indicators
+        cols = st.columns(len(optional_sections))
+        for idx, section in enumerate(optional_sections):
+            if section["key"] == "pfma_name_confirm" and s.get("pfma_relationship") != "Self":
+                continue
+            with cols[idx]:
+                icon = "✅" if section["key"] in s.pfma_confirmed_sections else "⚪"
+                if st.button(f"{icon} {section['label']}", key=f"nav_{section['key']}", help=f"Go to {section['label']}"):
+                    s[f"expander_{section['key']}"] = True
+                    st.rerun()
+        # Uncompleted sections prompt
+        uncompleted = [section["label"] for section in optional_sections if section["key"] not in s.pfma_confirmed_sections and (section["key"] != "pfma_name_confirm" or s.get("pfma_relationship") == "Self")]
+        if uncompleted:
+            st.caption(f"Next steps: Complete {', '.join(uncompleted)} to earn more badges!")
+    with st.expander("Confirm Guided Care Plan", expanded=s.get("expander_pfma_care_type", False)):
         st.write("Based on your Guided Care Plan, we’ve pre-filled your care type and daily needs. If you haven’t completed it yet, please fill in these details to help us tailor your care plan. Review and confirm or edit to ensure accuracy.")
         for p in people:
             pid, name = p["id"], p["display_name"]
@@ -350,7 +375,7 @@ def render_pfma():
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
                 s.pfma_confirmed_sections["pfma_care_type"] = True
             st.success("You just earned the Care Plan Confirmer badge! Keep going!")
-    with st.expander("Confirm Cost Planner"):
+    with st.expander("Confirm Cost Planner", expanded=s.get("expander_pfma_conditions", False)):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
             pid, name = p["id"], p["display_name"]
@@ -383,7 +408,7 @@ def render_pfma():
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
                 s.pfma_confirmed_sections["pfma_conditions"] = True
             st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
-    with st.expander("Care Needs & Daily Support"):
+    with st.expander("Care Needs & Daily Support", expanded=s.get("expander_pfma_symptoms", False)):
         st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
         for p in people:
             pid, name = p["id"], p["display_name"]
@@ -459,7 +484,7 @@ def render_pfma():
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
                 s.pfma_confirmed_sections["pfma_symptoms"] = True
             st.success("You just earned the Care Needs Expert badge! Keep going!")
-    with st.expander("Care Preferences"):
+    with st.expander("Care Preferences", expanded=s.get("expander_pfma_settings", False)):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
         for p in people:
             pid, name = p["id"], p["display_name"]
@@ -506,7 +531,7 @@ def render_pfma():
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
                 s.pfma_confirmed_sections["pfma_settings"] = True
             st.success("You just earned the Preferences Pro badge! Keep going!")
-    with st.expander("Household & Legal Basics"):
+    with st.expander("Household & Legal Basics", expanded=s.get("expander_pfma_marital", False)):
         st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
         for p in people:
             pid, name = p["id"], p["display_name"]
@@ -558,7 +583,7 @@ def render_pfma():
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
                 s.pfma_confirmed_sections["pfma_marital"] = True
             st.success("You just earned the Household Hero badge! Keep going!")
-    with st.expander("Benefits & Coverage"):
+    with st.expander("Benefits & Coverage", expanded=s.get("expander_pfma_ltc", False)):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
             "Realistic monthly care budget",
@@ -600,7 +625,7 @@ def render_pfma():
             s.pfma_confirmed_sections["pfma_ltc"] = True
             st.success("You just earned the Benefits Boss badge! Keep going!")
     if s.get("pfma_relationship") == "Self":
-        with st.expander("Personal Information"):
+        with st.expander("Personal Information", expanded=s.get("expander_pfma_name_confirm", False)):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
             st.text_input("Your name", key="pfma_name_confirm", value=s.get("pfma_name", ""), placeholder="E.g., Taylor Morgan", help="We only use this to contact you")
             st.text_input("Best phone number", key="pfma_phone_confirm", value=s.get("pfma_phone", ""), placeholder="E.g., (555) 123-4567", help="We’ll call at your preferred time")
@@ -681,11 +706,11 @@ def render_pfma():
             cols = st.columns(len(badges))
             for idx, (badge_text, badge_help) in enumerate(badges):
                 with cols[idx]:
-                    st.write(f"**{badge_text}**", help=badge_help)
+                    st.markdown(f"<div class='badge'>**{badge_text}**</div>", unsafe_allow_html=True, help=badge_help)
         else:
             st.info("Complete sections to unlock badges and help your advisor!")
         if filled_count == total_sections:
-            st.success("All sections complete! You’re ready for a stellar consultation!")
+            st.success(f"Great job, {s.get('pfma_name', 'User')}! You’ve earned all {total_sections} badges and are ready for your consultation!")
 
 # ---------------- Data files present? ----------------
 missing = [p for p in (QA_PATH, REC_PATH) if not p.exists()]
