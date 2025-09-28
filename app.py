@@ -122,11 +122,26 @@ def _render_pfma_tools_block():
         st.markdown("<div class='pfma-card'><h4>Exports</h4>", unsafe_allow_html=True)
         buf = StringIO()
         writer = csv.writer(buf)
-        writer.writerow(["Section","Item","Amount"])
+        writer.writerow(["Section","Item","Value"])
+        # Care Plans
+        for p in s.get("people", []):
+            pid, name = p["id"], p["display_name"]
+            rec = s.get("planner_results", {}).get(pid)
+            scenario = s.get("care_overrides", {}).get(pid, getattr(rec, "care_type", "in_home")) if rec else "in_home"
+            cost = s.get("person_costs", {}).get(pid, 0)
+            conditions = _merge_conditions_from_cost_planner().get(pid, [])
+            adls = _derive_adls_and_others(pid).get("adls", [])
+            writer.writerow(["Care Plan", f"{name} Scenario", scenario.replace('_', ' ').title()])
+            writer.writerow(["Care Plan", f"{name} Monthly Cost", cost])
+            writer.writerow(["Care Plan", f"{name} Conditions", ", ".join(conditions) if conditions else "None"])
+            writer.writerow(["Care Plan", f"{name} ADLs", ", ".join(adls) if adls else "None"])
+        # Income
         for k,v in {"individual_A":inc_A,"individual_B":inc_B,"household":inc_house,"va_A":va_A,"va_B":va_B,"reverse_mortgage_monthly":rm_monthly,"total":income_total}.items():
             writer.writerow(["Income",k,v])
+        # Costs
         for k,v in {"care":care_total,"home":home_monthly,"mods_monthly":mods_monthly,"other":other_monthly,"total":monthly_costs_total}.items():
             writer.writerow(["Costs",k,v])
+        # Assets
         for k,v in {"common":assets_common,"less_common":assets_detail,"home_sale_proceeds_applied":sale_proceeds,"reverse_mortgage_lump_applied":rm_lump,"rm_fees_out_of_pocket":rm_fees_oop,"total_effective":assets_total_effective}.items():
             writer.writerow(["Assets",k,v])
         writer.writerow(["Picture","gap",gap]); writer.writerow(["Picture","runway_months",months_runway])
@@ -136,7 +151,19 @@ def _render_pfma_tools_block():
         html_parts = [
             '<html><head><meta charset="utf-8"><title>Senior Navigator Export</title>',
             '<style>body{font-family:Arial,sans-serif;margin:24px} table{border-collapse:collapse;margin-bottom:18px} th,td{border:1px solid #ddd;padding:8px} th{background:#f7f7f7}</style></head><body>',
-            '<h2>Financial Breakdown</h2>',
+            '<h2>Senior Navigator Export</h2>',
+            '<h3>Care Plans</h3><table><tr><th>Person</th><th>Scenario</th><th>Monthly Cost</th><th>Conditions</th><th>ADLs</th></tr>',
+        ]
+        for p in s.get("people", []):
+            pid, name = p["id"], p["display_name"]
+            rec = s.get("planner_results", {}).get(pid)
+            scenario = s.get("care_overrides", {}).get(pid, getattr(rec, "care_type", "in_home")) if rec else "in_home"
+            cost = s.get("person_costs", {}).get(pid, 0)
+            conditions = _merge_conditions_from_cost_planner().get(pid, [])
+            adls = _derive_adls_and_others(pid).get("adls", [])
+            html_parts.append(f"<tr><td>{name}</td><td>{scenario.replace('_', ' ').title()}</td><td>{_m(cost)}</td><td>{', '.join(conditions) if conditions else 'None'}</td><td>{', '.join(adls) if adls else 'None'}</td></tr>")
+        html_parts.extend([
+            '</table>',
             '<h3>Monthly Income</h3><table><tr><th>Source</th><th>Monthly</th></tr>',
             _row("Individual A", inc_A), _row("Individual B", inc_B), _row("Household", inc_house),
             _row("VA — A", va_A), _row("VA — B", va_B), _row("Reverse mortgage (monthly)", rm_monthly),
@@ -149,7 +176,7 @@ def _render_pfma_tools_block():
             _row("Reverse mortgage lump (applied)", rm_lump),
             f"<tr><td>RM fees out-of-pocket (deducted)</td><td>- {_m(rm_fees_oop)}</td></tr>",
             f"<tr><th>Assets Total (effective)</th><th>{_m(assets_total_effective)}</th></tr>", "</table>"
-        ]
+        ])
         if gap > 0:
             ym = f"{years} years {rem} months" if years else f"{rem} months"
             html_parts.append(f"<p><b>Monthly gap:</b> {_m(gap)}. <b>Estimated runway:</b> {ym}.</p>")
@@ -485,6 +512,7 @@ def render_pfma():
         filled_count = sum(1 for section in optional_sections if section["key"] in s.pfma_confirmed_sections and s.pfma_confirmed_sections[section["key"]])
         total_sections = 6 if s.get("pfma_relationship") != "Self" else 7
         st.write(f"Badges Earned: {filled_count}/{total_sections} 🏅")
+        progress = filled_count / total_sections
         st.progress(progress, text=f"Progress: {filled_count}/{total_sections} sections completed – You’re helping us tailor your care plan!")
         # Visual progress indicators
         cols = st.columns(len(optional_sections))
@@ -530,9 +558,9 @@ def render_pfma():
                 pid = p["id"]
                 s.pfma_care_type = {**s.get("pfma_care_type", {}), pid: s[f"pfma_care_type_{pid}"]}
                 s.pfma_adls = {**s.get("pfma_adls", {}), pid: s[f"pfma_adls_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Care Plan Confirmer badge! Keep going!")
-            st.rerun()
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Confirm Cost Planner", expanded=s.get("expander_pfma_conditions", False)):
         st.write("Based on your Cost Planner, we’ve pre-filled your health and mobility details. If you haven’t completed it yet, please add these details to ensure we have the right information. Review and confirm or edit to make sure it’s right.")
         for p in people:
@@ -565,9 +593,9 @@ def render_pfma():
                 s.pfma_mobility = {**s.get("pfma_mobility", {}), pid: s[f"pfma_mobility_{pid}"]}
                 if "Diabetes" in s[f"pfma_conditions_{pid}"]:
                     s.pfma_diabetes_control = {**s.get("pfma_diabetes_control", {}), pid: s[f"pfma_diabetes_control_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Cost Planner Confirmer badge! Keep going!")
-            st.rerun()
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Care Needs & Daily Support", expanded=s.get("expander_pfma_symptoms", False)):
         st.write("Help us tailor your care plan by sharing additional health or daily support needs. These details are optional but can make a big difference in finding the right fit.")
         for p in people:
@@ -643,9 +671,9 @@ def render_pfma():
                 s.pfma_weight = {**s.get("pfma_weight", {}), pid: s[f"pfma_weight_{pid}"]}
                 s.pfma_incont = {**s.get("pfma_incont", {}), pid: s[f"pfma_incont_{pid}"]}
                 s.pfma_sleep = {**s.get("pfma_sleep", {}), pid: s[f"pfma_sleep_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Care Needs Expert badge! Keep going!")
-            st.rerun()
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Care Preferences", expanded=s.get("expander_pfma_settings", False)):
         st.write("Share your lifestyle and care preferences to help us find options that feel like home.")
         for p in people:
@@ -692,9 +720,9 @@ def render_pfma():
                 s.pfma_pets = {**s.get("pfma_pets", {}), pid: s[f"pfma_pets_{pid}"]}
                 s.pfma_activities = {**s.get("pfma_activities", {}), pid: s[f"pfma_activities_{pid}"]}
                 s.pfma_radius = {**s.get("pfma_radius", {}), pid: s[f"pfma_radius_{pid}"]}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Preferences Pro badge! Keep going!")
-            st.rerun()
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Household & Legal Basics", expanded=s.get("expander_pfma_marital", False)):
         st.write("Tell us about your living situation and legal arrangements to ensure we recommend the right environment.")
         for p in people:
@@ -746,9 +774,9 @@ def render_pfma():
                 s.pfma_alcohol = {**s.get("pfma_alcohol", {}), pid: s[f"pfma_alcohol_{pid}"]}
                 s.pfma_poa_type = {**s.get("pfma_poa_type", {}), pid: s[f"pfma_poa_type_{pid}"]}
                 s.pfma_poa_name = {**s.get("pfma_poa_name", {}), pid: s.get(f"pfma_poa_name_{pid}", "")}
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Household Hero badge! Keep going!")
-            st.rerun()
+            st.rerun() # Explicit rerun to ensure UI updates
     with st.expander("Benefits & Coverage", expanded=s.get("expander_pfma_ltc", False)):
         st.write("Let us know about your budget and benefits to ensure affordable and suitable options.")
         st.selectbox(
@@ -789,9 +817,9 @@ def render_pfma():
                 "has_va": s.get("pfma_va", False),
                 "medicaid_interest": s.get("pfma_medicaid", False),
             })
-            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+            st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
             st.success("You just earned the Benefits Boss badge! Keep going!")
-            st.rerun()
+            st.rerun() # Explicit rerun to ensure UI updates
     if s.get("pfma_relationship") == "Self":
         with st.expander("Personal Information", expanded=s.get("expander_pfma_name_confirm", False)):
             st.write("Please review and confirm your contact details so we can reach you to discuss your care plan.")
@@ -808,9 +836,9 @@ def render_pfma():
                     "confirmed_email": s.get("pfma_email_confirm", ""),
                     "confirmed_referral_name": s.get("pfma_referral_name_confirm", ""),
                 })
-                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections
+                st.session_state.pfma_confirmed_sections = s.pfma_confirmed_sections # Force state update
                 st.success("You just earned the Personal Info Star badge! Keep going!")
-                st.rerun()
+                st.rerun() # Explicit rerun to ensure UI updates
     st.divider()
     if st.button("Save optional details", key="pfma_optional_save", type="primary"):
         s.pfma_optional = {
@@ -1062,7 +1090,7 @@ elif st.session_state.step == "household":
         except Exception:
             st.error("Household drawers failed."); st.code(traceback.format_exc()); result = None
         if result is not None and hasattr(result, "as_dict"):
-            with st.expander("Details (for debugging)", expanded=False):
+            with st.expander("Details (for debugging", expanded=False):
                 st.json(result.as_dict())
     c1, c2, c3 = st.columns(3)
     with c1:
