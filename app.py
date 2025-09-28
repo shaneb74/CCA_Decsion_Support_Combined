@@ -1,4 +1,13 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
+import json
+import csv
+from io import StringIO
+
+
+import os
+from pathlib import Path
+import traceback
+import streamlit as st
 from __future__ import annotations
 
 
@@ -181,17 +190,6 @@ def _render_pfma_tools_block():
 # If the canonical renderer doesn't exist but the alt one does, create an alias.
 if "_render_pfma_tools_block" not in globals() and "_render_tools_pfma" in globals():
 # (removed old recursive PFMA shim)
-
-
-import json
-import csv
-from io import StringIO
-
-
-import os
-from pathlib import Path
-import traceback
-import streamlit as st
 
 from cost_controls import (
     render_location_control,
