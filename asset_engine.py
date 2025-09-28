@@ -4,14 +4,6 @@ from dataclasses import dataclass, asdict
 from typing import Dict, Any, List, Optional
 import streamlit as st
 
-# Canonical mapping for home decisions
-HOME_DECISION_MAP = {
-    "Keep": "KEEP",
-    "Sell": "SELL",
-    "HELOC": "HELOC",
-    "Reverse mortgage": "RM",
-}
-
 def _fmt(x: int | float) -> str:
     try:
         return f"${int(x):,}"
@@ -227,7 +219,23 @@ class IncomeAssetsEngine:
         return a_va, b_va, a_ltc_add, b_ltc_add, benefits_total
 
     def _section_home_decision(self):
-        with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=True):
+
+        # --- canonicalize home decision selection to avoid text mismatches ---
+        _label = st.session_state.get("home_decision") if hasattr(st, "session_state") else None
+        try:
+            # If a local variable from selectbox exists, prefer it
+            _label = locals().get("home_decision", _label)
+        except Exception:
+            pass
+        HOME_DECISION_MAP = {
+            "Keep": "KEEP",
+            "Sell": "SELL",
+            "HELOC": "HELOC",
+            "Reverse mortgage": "RM",
+            "Reverse Mortgage": "RM"
+        }
+        decision_code = HOME_DECISION_MAP.get(_label, str(_label or ""))
+            with st.expander("Home decision (keep, sell, HELOC, reverse mortgage)", expanded=True):
             decision = st.selectbox("What do you plan to do with the home?",
                                     ["Keep", "Sell", "HELOC", "Reverse mortgage"],
                                     key="home_decision")
