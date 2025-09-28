@@ -1,12 +1,13 @@
 # app.py — Senior Navigator (Planner → Recommendations → Costs → Household → Breakdown → PFMA)
 from __future__ import annotations
 
-from io import StringIO
-
 import os
 from pathlib import Path
 import traceback
 import streamlit as st
+from io import StringIO
+
+AI_HANDOFF_ENABLED = True
 
 from cost_controls import (
     render_location_control,
@@ -921,6 +922,8 @@ elif st.session_state.step == "household":
         if st.button("Finish", key="hh_finish"):
             st.session_state.step = "intro"; st.rerun()
 elif st.session_state.step == "breakdown":
+    _ai_agent_button_fallback()
+
     st.header("Detailed Breakdown")
     s = st.session_state
     people = s.get("people", [])
@@ -1003,3 +1006,25 @@ elif st.session_state.step == "breakdown":
         if st.button("Schedule with an Advisor", key="bd_pfma_btn"): st.session_state.step = "pfma"; st.rerun()
 elif st.session_state.step == "pfma":
     render_pfma()
+
+
+# --- Fallback AI Agent button (always safe to render) ---
+def _ai_agent_button_fallback():
+    try:
+        if not AI_HANDOFF_ENABLED:
+            return
+        if st.button("Discuss this with my AI Agent (mock)", key="ai_handoff_breakdown_btn_fallback"):
+            # Lightweight summary to show handoff UX
+            def _to_int(v, default=0):
+                try: return int(v or 0)
+                except:
+                    try: return int(float(str(v).replace("$","").replace(",","")))
+                    except: return default
+            s = st.session_state
+            income_total = sum(_to_int(s.get(k)) for k in ["a_ss","a_pn","a_other","b_ss","b_pn","b_other","hh_rent","hh_annuity","hh_invest","hh_trust","hh_other","a_va_monthly","b_va_monthly","rm_monthly_income"])
+            costs_total = sum(_to_int(s.get(k)) for k in ["care_monthly_total","home_monthly_total","mods_monthly_total","other_monthly_total"])
+            gap = costs_total - income_total
+            st.success("Sent to AI Agent (mock).")
+            st.write(f"**Summary:** Income ${income_total:,} • Costs ${costs_total:,} • Gap ${gap:,}")
+    except Exception as e:
+        st.warning(f"AI handoff mock unavailable: {e}")
