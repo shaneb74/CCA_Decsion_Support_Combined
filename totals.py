@@ -1,4 +1,4 @@
-# totals.py
+# totals.py — single source of truth for income, costs, assets, picture
 def _to_int(v, default=0):
     try:
         if v is None or v == "":
@@ -33,7 +33,8 @@ def get_cost_totals(s):
     home_monthly = _to_int(_g(s,"home_monthly","home_monthly_total"))
     mods_monthly = _to_int(_g(s,"mods_monthly","mods_monthly_total"))
     other_monthly = _to_int(_g(s,"other_monthly","other_monthly_total"))
-    return dict(care_total=care_total, home_monthly=home_monthly, mods_monthly=mods_monthly, other_monthly=other_monthly, total=care_total+home_monthly+mods_monthly+other_monthly)
+    total = care_total + home_monthly + mods_monthly + other_monthly
+    return dict(care_total=care_total, home_monthly=home_monthly, mods_monthly=mods_monthly, other_monthly=other_monthly, total=total)
 
 def get_asset_totals(s):
     assets_common = _to_int(_g(s,"assets_common","assets_common_total"))
